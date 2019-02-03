@@ -5,4 +5,8 @@
   :license  "MIT" ;; MIT or BSD3?
   :version "0.0.1"
   :serial t
+
+  :depends-on (:alexandria
+               :websocket-driver)
+  
   :components ((:file "twitch-websockets")))
