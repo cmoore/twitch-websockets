@@ -7,6 +7,8 @@
   :serial t
 
   :depends-on (:alexandria
-               :websocket-driver)
+               :websocket-driver
+               :cl-ppcre
+               :log4cl)
   
   :components ((:file "twitch-websockets")))

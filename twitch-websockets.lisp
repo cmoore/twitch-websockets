@@ -149,6 +149,9 @@
 ;; (defmacro with-hash-keys (key-list hash-table &rest body)
 ;;   )
 
+(defun scrub-message (message)
+  (cl-ppcre:regex-replace-all "" message ""))
+
 (defun parse-message (connection raw-message)
   ;;  (log:info raw-message)
   (let* ((split-message (ppcre:split " " (ppcre:regex-replace "\\r\\n$" raw-message "")))
@@ -166,48 +169,73 @@
     
     (destructuring-bind (user-info user message-type &rest message)
         split-message
-      
       (switch (message-type :test #'equal)
-        ("WHISPER" (make-instance 'whisper
-                                  :display-name (gethash "display-name"
-                                                         (parse-user-tags user-info))
-                                  :username user
-                                  :user-info user-info
-                                  :message (drop-colon
-                                            (format nil "~{~A ~}" (cdr message)))))
-        ("PRIVMSG" (let ((user-tags (parse-user-tags user-info)))
-                     (make-instance 'privmsg
-                                    :message (drop-colon
-                                              (format nil
-                                                      "~{~A ~}"
-                                                      (cdr message)))
-                                    :channel (car message)
-                                    :user-info (parse-user-tags user-info)
-                                    :display-name (gethash "display-name" user-tags)
-                                    :username (gethash "login" user-tags))))
-        ("CLEARCHAT" (progn
-                       (log:info "~a" user-info)
-                       (make-instance 'clearchat
-                                      :channel (drop-hash (car message))
-                                      :banned-user (drop-colon (cadr message))
-                                      :ban-duration (gethash "@ban-duration"
-                                                             (parse-user-tags user-info)))))
-        ("USERNOTICE" (let* ((user-tags (parse-user-tags user-info))
-                             (notice-type (gethash "msg-id" user-tags)))
-                        (cond ((or (string= notice-type "resub")
-                                   (string= notice-type "sub"))
-                               (make-instance 'resubscribe :twitch-id (gethash "user-id" user-tags)
-                                                           :user (gethash "display-name" user-tags)
-                                                           :color (gethash "color" user-tags)
-                                                           :premium nil
-                                                           :plan (gethash "msg-param-sub-plan-name" user-tags)
-                                                           :channel (car message)
-                                                           :message (ppcre:regex-replace-all
-                                                                     "\\\\s"
-                                                                     (gethash "system-msg" user-tags)
-                                                                     " ")))
-                              (t (log:info "USERNOTICE: fall through: ~a" notice-type)))))
-        (t (log:info "Falling through: ~a" split-message))))))
+
+        
+        ("WHISPER"
+         (make-instance 'whisper
+                        :display-name (gethash "display-name"
+                                               (parse-user-tags user-info))
+                        :username user
+                        :user-info user-info
+                        :message (drop-colon
+                                  (format nil "~{~A ~}" (cdr message)))))
+
+        
+        ("PRIVMSG"
+         (let ((user-tags (parse-user-tags user-info)))
+           (make-instance 'privmsg
+                          :message (scrub-message
+                                    (drop-colon
+                                     (format nil
+                                             "~{~A ~}"
+                                             (cdr message))))
+                          :channel (car message)
+                          :user-info user-info ;;(parse-user-tags user-info)
+                          :display-name (gethash "display-name" user-tags)
+                          :username (gethash "login" user-tags))))
+
+        
+        ("CLEARMSG"
+         (log:info "CLEVERLY DISGUISING A CLEARMSG EVENT AS A CLEARCHAT")
+         ;; (make-instance 'clearchat
+         ;;                :channel (drop-hash (car message))
+         ;;                :banned-user (drop-colon (cadr message))
+         ;;                :ban-duration (gethash "@ban-duration"
+         ;;                                       (parse-user-tags user-info) "0"))
+         )
+
+        
+        ("CLEARCHAT"
+         (log:info "channel: ~a user: ~a duration: ~a"
+                   (drop-hash (car message))
+                   (scrub-message (drop-colon (cadr message)))
+                   (gethash "@ban-duration"
+                            (parse-user-tags user-info) "NOTFOUND"))
+         ;; (make-instance 'clearchat
+         ;;                :channel (drop-hash (car message))
+         ;;                :banned-user (scrub-message (drop-colon (cadr message)))
+         ;;                :ban-duration (gethash "@ban-duration"
+         ;;                                       (parse-user-tags user-info) "0"))
+         )
+        
+        ("USERNOTICE"
+         (let* ((user-tags (parse-user-tags user-info))
+                (notice-type (gethash "msg-id" user-tags)))
+           (cond ((or (string= notice-type "resub")
+                      (string= notice-type "sub"))
+                  (make-instance 'resubscribe
+                                 :twitch-id (gethash "user-id" user-tags)
+                                 :user (gethash "display-name" user-tags)
+                                 :color (gethash "color" user-tags)
+                                 :premium nil
+                                 :plan (gethash "msg-param-sub-plan-name" user-tags)
+                                 :channel (car message)
+                                 :message (ppcre:regex-replace-all
+                                           "\\\\s"
+                                           (gethash "system-msg" user-tags)
+                                           " "))))))
+        (t nil)))))
 
 
 (defun make-connection (nick pass handler)
