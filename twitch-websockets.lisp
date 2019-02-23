@@ -212,7 +212,7 @@
                                            "\\\\s"
                                            (gethash "system-msg" user-tags)
                                            " "))))))
-        (t nil)))))
+        (t (log:info "Unhandled: ~a" message-type))))))
 
 
 (defun make-connection (nick pass handler)
