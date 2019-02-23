@@ -128,27 +128,6 @@
 (defun drop-hash (string)
   (ppcre:regex-replace "^#" string ""))
 
-;; welp, we know what to do...
-
-;; (with-slots) ;; shit.  sbcl hides its secrets
-;; (defun testit ()
-;;   (let ((the-hash (alist-hash-table (list (cons "a" "b")
-;;                                           (cons "c" "d")))))
-;;     (with-hash-keys ("a" "c") the-hash
-;;       (format nil "~a ~a" ,;;;;; hrmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
-;;               ;; DONT use symbols... that would be bad.  Not for this at least.
-;;               ;; how do you identify something inside a macro that was given as a string
-;;               ;; without polluting symbols everywhere......................................
-;;               ;; yes, I know, there's a reason that this isn't in the standard or in
-;;               ;; alexandria, but still... the lisp will provide if you pay the subscription.
-;;               ;; and you pay the subscription with thought.
-;;               ;; the standard does provide with-hash-table-iterator.
-;;               ;; I don't want to scan the whole hash for what could be one key, best case though.
-;;               ;; 
-;;               ))))
-;; (defmacro with-hash-keys (key-list hash-table &rest body)
-;;   )
-
 (defun scrub-message (message)
   (cl-ppcre:regex-replace-all "" message ""))
 
