@@ -176,13 +176,11 @@
 
         
         ("CLEARMSG"
-         (log:info "CLEVERLY DISGUISING A CLEARMSG EVENT AS A CLEARCHAT")
-         ;; (make-instance 'clearchat
-         ;;                :channel (drop-hash (car message))
-         ;;                :banned-user (drop-colon (cadr message))
-         ;;                :ban-duration (gethash "@ban-duration"
-         ;;                                       (parse-user-tags user-info) "0"))
-         )
+         (make-instance 'clearchat
+                        :channel (drop-hash (car message))
+                        :banned-user (drop-colon (cadr message))
+                        :ban-duration (gethash "@ban-duration"
+                                               (parse-user-tags user-info) "0")))
 
         
         ("CLEARCHAT"

@@ -1,0 +1,37 @@
+
+twitch-websockets
+
+A websockets event interface for Twitch.tv channels.
+
+
+* Usage
+
+#+BEGIN_SRC lisp
+
+(defun twitch-message-handler (message ws-connection)
+  (typecase message
+    (tmi:privmsg (log:info "Someone said ~a" (tmi:privmsg-message message)))
+    (tmi:clearchat (log:info "Looks like someone got banned."))
+    ;; and so on...))
+
+(defparameter *connection* (tmi:make-connection "nickname"
+                                                "password"
+                                                'twitch-message-handler))
+
+#+END_SRC
+
+* Handled events
+
+  A woefully incomplete list of possible events.
+
+- whisper
+- privmsg
+- clearmsg
+- clearchat
+
+  At the moment, this just gives a clearmsg object.  This will be fixed before
+  release.
+
+- usernotice
+
+  This hands the message handler a ~resubscribe~ object.
