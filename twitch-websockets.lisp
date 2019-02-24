@@ -12,10 +12,12 @@
            
            ;; events
            #:clearchat
+           #:clearmsg
            #:whisper
            #:privmsg
            #:resubscribe
-
+           #:addmod
+           #:unmod
            
            #:make-connection
            #:close-connection
@@ -24,6 +26,7 @@
            #:part))
 
 (in-package #:twitch-websockets)
+
 
 (defclass user ()
   ((username :initarg :username
@@ -36,12 +39,10 @@
 (export 'user-display-name)
 (export 'user-username)
 
-
 (defclass whisper (user)
   ((message :initarg :message
             :accessor whisper-message)))
 (export 'whisper-message)
-
 
 (defclass clearchat ()
   ((channel :initarg :channel
@@ -53,6 +54,19 @@
 (export 'clearchat-channel)
 (export 'clearchat-banned-user)
 (export 'clearchat-ban-duration)
+
+(defclass clearmsg ()
+  ((channel :initarg :channel
+            :accessor clearmsg-channel)
+   (login :initarg :login
+          :accessor clearmsg-login)
+   (message-id :initarg :message-id
+               :accessor clearmsg-message-id)))
+
+(export 'clearmsg-channel)
+(export 'clearmsg-login)
+(export 'clearmsg-message-id)
+
 
 (defclass privmsg (user)
   ((channel :initarg :channel
@@ -90,6 +104,22 @@
 (export 'resubscribe-color)
 (export 'resubscribe-channel)
 (export 'resubscribe-message)
+
+(defclass unmod ()
+  ((channel :initarg :channel
+            :accessor unmod-channel)
+   (user :initarg :user
+         :accessor unmod-user)))
+(export 'unmod-channel)
+(export 'unmod-user)
+
+(defclass addmod ()
+  ((channel :initarg :mode
+            :accessor addmod-channel)
+   (user :initarg :user
+         :accessor addmod-user)))
+(export 'addmod-channel)
+(export 'addmod-user)
 
 (defun parse-user-tags (info-line)
   (declare (optimize (speed 3) (safety 1) (debug 0)))
@@ -132,7 +162,6 @@
   (cl-ppcre:regex-replace-all "" message ""))
 
 (defun parse-message (connection raw-message)
-  ;;  (log:info raw-message)
   (let* ((split-message (ppcre:split " " (ppcre:regex-replace "\\r\\n$" raw-message "")))
          ;; This is not the message type.  It's to tell things like PINGs etc. from
          ;; PRIVMSG and friends.
@@ -149,7 +178,6 @@
     (destructuring-bind (user-info user message-type &rest message)
         split-message
       (switch (message-type :test #'equal)
-
         
         ("WHISPER"
          (make-instance 'whisper
@@ -159,7 +187,6 @@
                         :user-info user-info
                         :message (drop-colon
                                   (format nil "~{~A ~}" (cdr message)))))
-
         
         ("PRIVMSG"
          (let ((user-tags (parse-user-tags user-info)))
@@ -173,29 +200,21 @@
                           :user-info user-info ;;(parse-user-tags user-info)
                           :display-name (gethash "display-name" user-tags)
                           :username (gethash "login" user-tags))))
-
         
         ("CLEARMSG"
+         (let ((user-tags (parse-user-tags user-info)))
+           (make-instance 'clearmsg
+                          :message-id (gethash "target-msg-id" user-tags)
+                          :login (gethash "@login" user-tags)
+                          :channel (drop-colon (car message)))))
+        
+        ("CLEARCHAT"
          (make-instance 'clearchat
                         :channel (drop-hash (car message))
-                        :banned-user (drop-colon (cadr message))
+                        :banned-user (scrub-message (drop-colon (cadr message)))
                         :ban-duration (gethash "@ban-duration"
                                                (parse-user-tags user-info) "0")))
 
-        
-        ("CLEARCHAT"
-         (log:info "channel: ~a user: ~a duration: ~a"
-                   (drop-hash (car message))
-                   (scrub-message (drop-colon (cadr message)))
-                   (gethash "@ban-duration"
-                            (parse-user-tags user-info) "NOTFOUND"))
-         ;; (make-instance 'clearchat
-         ;;                :channel (drop-hash (car message))
-         ;;                :banned-user (scrub-message (drop-colon (cadr message)))
-         ;;                :ban-duration (gethash "@ban-duration"
-         ;;                                       (parse-user-tags user-info) "0"))
-         )
-        
         ("USERNOTICE"
          (let* ((user-tags (parse-user-tags user-info))
                 (notice-type (gethash "msg-id" user-tags)))
@@ -212,7 +231,23 @@
                                            "\\\\s"
                                            (gethash "system-msg" user-tags)
                                            " "))))))
-        (t (log:info "Unhandled: ~a" message-type))))))
+
+        ;; The MODE events (ie. opping/modding a person) are in a different format.
+        (t
+         (log:info split-message)
+         (if (string= (cadr split-message) "MODE")
+           (destructuring-bind (jtv mode channel action nick)
+               split-message
+             (declare (ignore mode jtv))
+             (switch (action :test #'string=)
+               ("+o" (make-instance 'addmod
+                                    :user nick
+                                    :channel channel))
+               ("-o" (make-instance 'unmod
+                                    :user nick
+                                    :channel channel))
+               (t (error (format nil "Unhandled mode ~a" raw-message)))))
+           (log:info "Unhandled: type: ~a raw-message: ~a" message-type raw-message)))))))
 
 
 (defun make-connection (nick pass handler)

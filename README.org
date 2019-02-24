@@ -3,35 +3,32 @@ twitch-websockets
 
 A websockets event interface for Twitch.tv channels.
 
-
 * Usage
 
-#+BEGIN_SRC lisp
+  It's important to note that this package only provides a thin layer on top of
+  websocket-driver, and you'll need to use it for things like joining and
+  leaving a channel, sending messages, and the like.  This library just provdes
+  an evented interface to the events happening on different channels at the same
+  time and was written to be used by a bot that joined ~50 or so channels a
+  thread.
 
-(defun twitch-message-handler (message ws-connection)
-  (typecase message
-    (tmi:privmsg (log:info "Someone said ~a" (tmi:privmsg-message message)))
-    (tmi:clearchat (log:info "Looks like someone got banned."))
-    ;; and so on...))
+  The nicknames ~wsd~ (websocket-driver) and ~tmi~ (this library) make this a
+  little easier.
 
-(defparameter *connection* (tmi:make-connection "nickname"
-                                                "password"
-                                                'twitch-message-handler))
-
-#+END_SRC
+  Take a look at ~tmi-test.lisp~ for an example session.
 
 * Handled events
 
-  A woefully incomplete list of possible events.
+  I've been adding events as I find them.  One thing that *isn't* in is getting
+  the list of mods when you first join a channel.  Twitch sends this info just
+  fine, I just haven't taken the time to figure out how I want to handle such a
+  potentially large amount of events (addmod) at one time.
 
-- whisper
 - privmsg
-- clearmsg
+- whisper
 - clearchat
-
-  At the moment, this just gives a clearmsg object.  This will be fixed before
-  release.
-
-- usernotice
-
-  This hands the message handler a ~resubscribe~ object.
+- clearmsg - This is brittle to the point of being practically broken.  It's
+  first on the list to fix.
+- resubscribe
+- addmod
+- unmod
