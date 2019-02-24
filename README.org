@@ -7,7 +7,7 @@ A websockets event interface for Twitch.tv channels.
 
   It's important to note that this package only provides a thin layer on top of
   websocket-driver, and you'll need to use it for things like joining and
-  leaving a channel, sending messages, and the like.  This library just provdes
+  leaving a channel, sending messages, and the like.  This library just provides
   an evented interface to the events happening on different channels at the same
   time and was written to be used by a bot that joined ~50 or so channels a
   thread.
