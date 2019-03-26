@@ -250,7 +250,7 @@
            (log:info "Unhandled: type: ~a raw-message: ~a" message-type raw-message)))))))
 
 
-(defun make-connection (nick pass handler)
+(defun make-connection (nick pass handler &key (verify t))
   (let ((connection (wsd:make-client "wss://irc-ws.chat.twitch.tv:443/irc")))
     (wsd:on :error connection
             (lambda (error)
@@ -273,7 +273,7 @@
                 ;;        (log:info "HANDLER ERROR: ~a" condition)
                 ;;        nil)
                 ))
-    (wsd:start-connection connection)
+    (wsd:start-connection connection :verify verify)
     (start-ping-handler connection)
     connection))
 
