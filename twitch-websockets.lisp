@@ -23,7 +23,10 @@
            #:close-connection
            
            #:join
-           #:part))
+           #:part
+           #:notice
+           #:hosting
+           #:roomstate))
 
 (in-package #:twitch-websockets)
 
@@ -39,10 +42,19 @@
 (export 'user-display-name)
 (export 'user-username)
 
+(defmethod print-object ((user user) out)
+  (print-unreadable-object (user out :type t)
+    (format out "~a ~a ~a"
+            (user-info user)
+            (user-display-name user)
+            (user-username user))))
+
+
 (defclass whisper (user)
   ((message :initarg :message
             :accessor whisper-message)))
 (export 'whisper-message)
+
 
 (defclass clearchat ()
   ((channel :initarg :channel
@@ -54,6 +66,7 @@
 (export 'clearchat-channel)
 (export 'clearchat-banned-user)
 (export 'clearchat-ban-duration)
+
 
 (defclass clearmsg ()
   ((channel :initarg :channel
@@ -75,6 +88,7 @@
             :accessor privmsg-message)))
 (export 'privmsg-channel)
 (export 'privmsg-message)
+
 
 (defclass resubscribe (user)
   ((twitch-id :initarg :twitch-id
@@ -105,24 +119,72 @@
 (export 'resubscribe-channel)
 (export 'resubscribe-message)
 
-(defclass unmod ()
-  ((channel :initarg :channel
-            :accessor unmod-channel)
-   (user :initarg :user
-         :accessor unmod-user)))
-(export 'unmod-channel)
-(export 'unmod-user)
 
-(defclass addmod ()
-  ((channel :initarg :mode
-            :accessor addmod-channel)
-   (user :initarg :user
-         :accessor addmod-user)))
+(defclass unmod (user)
+  ((channel :initarg :channel
+            :accessor unmod-channel)))
+(export 'unmod-channel)
+
+
+(defclass addmod (user)
+  ((channel :initarg :channel
+            :accessor addmod-channel)))
 (export 'addmod-channel)
-(export 'addmod-user)
+
+
+(defclass part (user)
+  ((channel :initarg :channel
+            :accessor part-channel)))
+(export 'part-channel)
+
+
+(defclass join (user)
+  ((channel :initarg :channel
+            :accessor join-channel)))
+(export 'join-channel)
+
+
+(defclass notice ()
+  ((message :initarg :message
+            :accessor notice-message)))
+(export 'notice-message)
+
+
+(defclass hosting ()
+  ((who :initarg :who
+        :accessor hosting-who)
+   (target :initarg :target
+           :accessor hosting-target)))
+(export 'hosting-who)
+(export 'hosting-target)
+
+
+(defclass roomstate ()
+  ((emote-only :initarg :emote-only
+               :accessor roomstate-emote-only)
+   (followers-only :initarg :followers-only
+                   :accessor roomstate-followers-only)
+   (r9k :initarg :r9k
+        :accessor roomstate-r9k)
+   (rituals :initarg :rituals
+            :accessor roomstate-rituals)
+   (room-id :initarg :room-id
+            :accessor roomstate-room-id)
+   (slow :initarg :slow
+         :accessor roomstate-slow)
+   (subs-only :initarg :subs-only
+              :accessor roomstate-subs-only)))
+(export 'roomstate-emote-only)
+(export 'roomstate-followers-only)
+(export 'roomstate-r9k)
+(export 'roomstate-rituals)
+(export 'roomstate-room-id)
+(export 'roomstate-slow)
+(export 'roomstate-subs-only)
+
+
 
 (defun parse-user-tags (info-line)
-  (declare (optimize (speed 3) (safety 1) (debug 0)))
   (let ((entries (ppcre:split ";" info-line))
         (result (make-hash-table :test #'equalp)))
     (map nil (lambda (entry)
@@ -161,8 +223,16 @@
 (defun scrub-message (message)
   (cl-ppcre:regex-replace-all "" message ""))
 
+(defun split-irc-message (message)
+  (ppcre:split " " (ppcre:regex-replace-all "\\r\\n$" message "")))
+
+(defun parse-irc-name (string)
+  (ppcre:regex-replace "^:"
+                       (car (ppcre:split "!" string))
+                       ""))
+
 (defun parse-message (connection raw-message)
-  (let* ((split-message (ppcre:split " " (ppcre:regex-replace "\\r\\n$" raw-message "")))
+  (let* ((split-message (split-irc-message raw-message))
          ;; This is not the message type.  It's to tell things like PINGs etc. from
          ;; PRIVMSG and friends.
          (command (car split-message)))
@@ -174,7 +244,7 @@
            ;; them, but ok, we're flexible.
            (wsd:send connection "PONG")
            (return-from parse-message nil)))
-    
+
     (destructuring-bind (user-info user message-type &rest message)
         split-message
       (switch (message-type :test #'equal)
@@ -233,21 +303,67 @@
                                            " "))))))
 
         ;; The MODE events (ie. opping/modding a person) are in a different format.
-        (t
-         (log:info split-message)
-         (if (string= (cadr split-message) "MODE")
-           (destructuring-bind (jtv mode channel action nick)
-               split-message
-             (declare (ignore mode jtv))
-             (switch (action :test #'string=)
-               ("+o" (make-instance 'addmod
-                                    :user nick
-                                    :channel channel))
-               ("-o" (make-instance 'unmod
-                                    :user nick
-                                    :channel channel))
-               (t (error (format nil "Unhandled mode ~a" raw-message)))))
-           (log:info "Unhandled: type: ~a raw-message: ~a" message-type raw-message)))))))
+        (t (labels
+               ((make-mode (name channel mode)
+                  (switch (mode :test #'string=)
+                    ("+o" (make-instance 'addmod
+                                         :display-name name
+                                         :channel channel))
+                    ("-o" (make-instance 'unmod
+                                         :display-name name
+                                         :channel channel))))
+                (handle-multimessage (message)
+                  (cond
+                    ((string= (nth 2 message) "NOTICE")
+                     (let ((message (drop-colon
+                                     (format nil "~{~A ~}" (subseq message 4)))))
+                       (return-from parse-message
+                         (make-instance 'notice :message message))))
+                    ((string= (nth 1 message) "HOSTTARGET")
+                     (return-from parse-message
+                       (make-instance 'hosting
+                                      :who (drop-hash (nth 2 message))
+                                      :target (drop-colon (nth 3 message)))))
+                    ((string= (nth 2 message) "ROOMSTATE")
+                     (let ((tags (parse-user-tags (nth 0 message))))
+                       (return-from parse-message
+                         (make-instance 'roomstate
+                                        :subs-only (gethash "subs-only" tags)
+                                        :slow (gethash "slow" tags)
+                                        :room-id (gethash "room-id" tags)
+                                        :rituals (gethash "rituals" tags)
+                                        :r9k (gethash "r9k" tags)
+                                        :followers-only (gethash "followers-only" tags)
+                                        :emote-only (gethash "emote-only" tags)))))
+                    
+                    ((string= (nth 1 message) "PART")
+                     (return-from parse-message
+                       (make-instance 'part
+                                      :display-name (parse-irc-name (nth 0 message))
+                                      :channel (drop-hash (nth 2 message)))))
+                    
+                    ((string= (nth 1 message) "JOIN")
+                     (return-from parse-message
+                       (make-instance 'join
+                                      :display-name (parse-irc-name (nth 0 message))
+                                      :channel (drop-hash (nth 2 message)))))
+                    
+                    ((string= (nth 1 message) "MODE")
+                     (destructuring-bind (jtv mode channel action nick)
+                         message
+                       (declare (ignore mode jtv))
+                       (return-from parse-message
+                         (make-mode nick channel action))))
+                    
+                    ((= 1 (length message)) nil)
+                    
+                    (t ;;(log:info "FELL THROUGH: ~a" message)
+                     nil
+                     ))))
+             
+             (dolist (single-message (ppcre:split "" raw-message))
+               (handle-multimessage
+                (split-irc-message single-message)))))))))
 
 
 (defun make-connection (nick pass handler &key (verify t))
@@ -266,7 +382,10 @@
               (wsd:send connection (format nil "NICK ~a" nick))))
     (wsd:on :message connection
             #'(lambda (message)
-                (when-let ((parsed-message (parse-message connection message)))
+                (when-let ((parsed-message (funcall 'parse-message
+                                                  connection
+                                                  message) ;;(parse-message connection message)
+                                           ))
                   (apply handler (list parsed-message connection)))))
     (wsd:start-connection connection :verify verify)
     (start-ping-handler connection)
