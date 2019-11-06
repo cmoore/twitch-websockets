@@ -4,6 +4,7 @@
                 :alexandria
                 :yason))
 
+(declaim (optimize (speed 3) (safety 1)))
 
 (defpackage :tmi-test
   (:use :cl))
@@ -57,7 +58,7 @@
                  (tmi:clearmsg-channel message)
                  (tmi:clearmsg-message-id message)))
 
-    (tmi:privmsg nil)
+    (tmi:privmsg  nil) 
     ;; (log:info "~a on ~a said ~a"
     ;;    (tmi:user-display-name message)
     ;;    (tmi:privmsg-channel message)
@@ -85,14 +86,16 @@
                                        (alexandria:read-file-into-string
                                         (asdf:system-relative-pathname :chatpoll "config.json"))))
          
-                             'message-handler))
+                             'message-handler
+                             :verify nil))
 
 
   ;; 
-  ;; At this point, to test things out it's probably best to join a bunch of channels.
-  ;; for experimentation, what I do is go to
-  ;; https://www.twitch.tv/directory/all  which lists all channels in descending order
-  ;; by viewer count and join the ones with the most spam.
+  ;; At this point, to test things out it's probably best to join a
+  ;; bunch of channels.  for experimentation, what I do is go to
+  ;; https://www.twitch.tv/directory/all which lists all channels in
+  ;; descending order by viewer count and join the ones with the most
+  ;; spam.
   ;; 
   
-  (tmi:join *connection* "burkeblack"))
+  (tmi:join *connection* "sodapoppin"))
