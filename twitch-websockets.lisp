@@ -28,7 +28,47 @@
            #:part
            #:notice
            #:hosting
-           #:roomstate))
+           #:roomstate
+
+           #:clearchat-channel
+           #:clearchat-banned-user
+           #:clearchat-ban-duration
+           #:clearmsg-channel
+           #:clearmsg-login
+           #:clearmsg-message-id
+           #:privmsg-channel
+           #:privmsg-message
+           #:privmsg-tags
+           #:privmsg-raw
+           #:resubscribe-twitch-id
+           #:resubscribe-user
+           #:resubscribe-plan
+           #:resubscribe-turbo
+           #:resubscribe-months
+           #:resubscribe-premium
+           #:resubscribe-color
+           #:resubscribe-channel
+           #:resubscribe-message
+           #:resubscribe-tags
+           #:unmod-channel
+           #:addmod-channel
+           #:part-channel
+           #:join-channel
+           #:notice-message
+           #:notice-channel
+           #:hosting-who
+           #:hosting-target
+           #:roomstate-emote-only
+           #:roomstate-followers-only
+           #:roomstate-r9k
+           #:roomstate-rituals
+           #:roomstate-room-id
+           #:roomstate-slow
+           #:roomstate-subs-only
+           #:whisper-message
+           #:user-info
+           #:user-display-name
+           #:user-username))
 
 (in-package #:twitch-websockets)
 
@@ -42,9 +82,6 @@
                  :accessor user-display-name)
    (info :initarg :user-info
          :accessor user-info)))
-(export 'user-info)
-(export 'user-display-name)
-(export 'user-username)
 
 (defmethod print-object ((user user) out)
   (print-unreadable-object (user out :type t)
@@ -53,12 +90,9 @@
             (user-display-name user)
             (user-username user))))
 
-
 (defclass whisper (user)
   ((message :initarg :message
             :accessor whisper-message)))
-(export 'whisper-message)
-
 
 (defclass clearchat ()
   ((channel :initarg :channel
@@ -67,10 +101,6 @@
                 :accessor clearchat-banned-user)
    (ban-duration :initarg :ban-duration
                  :accessor clearchat-ban-duration)))
-(export 'clearchat-channel)
-(export 'clearchat-banned-user)
-(export 'clearchat-ban-duration)
-
 
 (defclass clearmsg ()
   ((channel :initarg :channel
@@ -79,11 +109,6 @@
           :accessor clearmsg-login)
    (message-id :initarg :message-id
                :accessor clearmsg-message-id)))
-
-(export 'clearmsg-channel)
-(export 'clearmsg-login)
-(export 'clearmsg-message-id)
-
 
 (defclass privmsg (user)
   ((channel :initarg :channel
@@ -94,10 +119,6 @@
          :accessor privmsg-tags)
    (raw :initarg :raw
         :accessor privmsg-raw)))
-(export 'privmsg-channel)
-(export 'privmsg-message)
-(export 'privmsg-tags)
-(export 'privmsg-raw)
 
 (defclass action (privmsg)
   ())
@@ -123,56 +144,34 @@
             :accessor resubscribe-message)
    (tags :initarg :tags
          :accessor resubscribe-tags)))
-(export 'resubscribe-twitch-id)
-(export 'resubscribe-user)
-(export 'resubscribe-plan)
-(export 'resubscribe-turbo)
-(export 'resubscribe-months)
-(export 'resubscribe-premium)
-(export 'resubscribe-color)
-(export 'resubscribe-channel)
-(export 'resubscribe-message)
-(export 'resubscribe-tags)
-
 
 (defclass unmod (user)
   ((channel :initarg :channel
             :accessor unmod-channel)))
-(export 'unmod-channel)
-
 
 (defclass addmod (user)
   ((channel :initarg :channel
             :accessor addmod-channel)))
-(export 'addmod-channel)
-
 
 (defclass part (user)
   ((channel :initarg :channel
             :accessor part-channel)))
-(export 'part-channel)
-
 
 (defclass join (user)
   ((channel :initarg :channel
             :accessor join-channel)))
-(export 'join-channel)
-
 
 (defclass notice ()
   ((message :initarg :message
-            :accessor notice-message)))
-(export 'notice-message)
-
+            :accessor notice-message)
+   (channel :initarg :channel
+            :accessor notice-channel)))
 
 (defclass hosting ()
   ((who :initarg :who
         :accessor hosting-who)
    (target :initarg :target
            :accessor hosting-target)))
-(export 'hosting-who)
-(export 'hosting-target)
-
 
 (defclass roomstate ()
   ((emote-only :initarg :emote-only
@@ -189,13 +188,6 @@
          :accessor roomstate-slow)
    (subs-only :initarg :subs-only
               :accessor roomstate-subs-only)))
-(export 'roomstate-emote-only)
-(export 'roomstate-followers-only)
-(export 'roomstate-r9k)
-(export 'roomstate-rituals)
-(export 'roomstate-room-id)
-(export 'roomstate-slow)
-(export 'roomstate-subs-only)
 
 
 (defun parse-user-tags (info-line)
@@ -338,10 +330,13 @@
               (handle-multimessage (message)
                 (cond
                   ((string= (nth 2 message) "NOTICE")
-                   (let ((message (drop-colon
-                                   (format nil "~{~A ~}" (subseq message 4)))))
-                     (return-from parse-message
-                       (make-instance 'notice :message message))))
+                   (progn
+                     (log:info "CAUGHT NOTICE: ~a" message)
+                     (let ((message-text (drop-colon
+                                     (format nil "~{~A ~}" (subseq message 4)))))
+                       (return-from parse-message
+                         (make-instance 'notice :message message-text
+                                                :channel (drop-hash (nth 3 message)))))))
                   ((string= (nth 1 message) "HOSTTARGET")
                    (return-from parse-message
                      (make-instance 'hosting
@@ -386,7 +381,6 @@
            (dolist (single-message (ppcre:split "" raw-message))
              (handle-multimessage
               (split-irc-message single-message)))))))))
-
 
 (defun make-connection (nick pass handler &key reconnect-handler
                                             (verify t))
