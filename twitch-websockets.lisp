@@ -20,6 +20,8 @@
            #:resubscribe
            #:addmod
            #:unmod
+           #:connected
+           #:disconnected
            
            #:make-connection
            #:close-connection
@@ -36,10 +38,14 @@
            #:clearmsg-channel
            #:clearmsg-login
            #:clearmsg-message-id
+           
            #:privmsg-channel
            #:privmsg-message
            #:privmsg-tags
            #:privmsg-raw
+           #:privmsg-subscribed
+           #:privmsg-mod
+           
            #:resubscribe-twitch-id
            #:resubscribe-user
            #:resubscribe-plan
@@ -66,9 +72,11 @@
            #:roomstate-slow
            #:roomstate-subs-only
            #:whisper-message
+           
            #:user-info
            #:user-display-name
-           #:user-username))
+           #:user-username
+           #:user-mod))
 
 (in-package #:twitch-websockets)
 
@@ -81,7 +89,9 @@
    (display-name :initarg :display-name
                  :accessor user-display-name)
    (info :initarg :user-info
-         :accessor user-info)))
+         :accessor user-info)
+   (userid :initarg :user-id
+           :accessor user-id)))
 
 (defmethod print-object ((user user) out)
   (print-unreadable-object (user out :type t)
@@ -118,7 +128,11 @@
    (tags :initarg :tags
          :accessor privmsg-tags)
    (raw :initarg :raw
-        :accessor privmsg-raw)))
+        :accessor privmsg-raw)
+   (subscribed :initarg :subscribed
+               :accessor privmsg-subscribed)
+   (mod :initarg :mod
+        :accessor privmsg-mod)))
 
 (defclass action (privmsg)
   ())
@@ -189,6 +203,11 @@
    (subs-only :initarg :subs-only
               :accessor roomstate-subs-only)))
 
+(defclass disconnected ()
+  nil)
+
+(defclass connected ()
+  nil)
 
 (defun parse-user-tags (info-line)
   (let ((entries (ppcre:split ";" info-line))
@@ -243,11 +262,16 @@
     
     (destructuring-bind (user-info user message-type &rest message)
         split-message
-      (switch (message-type :test #'equal)
+      (alexandria:switch (message-type :test #'equal)
 
         ;; Ignoring these for now.
-        ("USERSTATE" nil)
-        
+        ("USERSTATE" (log:info "USERSTATE: ~a" raw-message))
+
+        ("RECONNECT"
+         (log:info "GOT RECONNECT EVENT!!!")
+         (websocket-driver.ws.base:close-connection connection)
+         (make-instance 'disconnected))
+
         ("WHISPER"
          (make-instance 'whisper
                         :display-name (gethash "display-name"
@@ -258,28 +282,35 @@
                                   (format nil "~{~A ~}" (cdr message)))))
         
         ("PRIVMSG"
-         (let ((user-tags (parse-user-tags user-info)))
-           (let ((message-text (scrub-message
-                                (drop-colon
-                                 (format nil "~{~A ~}" (cdr message)))))
-                 (channel (car message)))
-             (if (ppcre:scan "^\\s?ACTION " message-text)
-               (make-instance 'action
-                              :message message-text 
-                              :channel channel
-                              :user-info user-info
-                              :display-name (gethash "display-name" user-tags)
-                              :username (gethash "login" user-tags)
-                              :tags user-tags
-                              :raw raw-message)
-               (make-instance 'privmsg
-                              :message message-text
-                              :channel channel
-                              :user-info user-info
-                              :display-name (gethash "display-name" user-tags)
-                              :username (gethash "login" user-tags)
-                              :tags user-tags
-                              :raw raw-message)))))
+         (let* ((user-tags (parse-user-tags user-info))
+                (message-text (scrub-message
+                               (drop-colon
+                                (format nil "~{~A ~}" (cdr message)))))
+                (channel (car message)))
+           ;;(log:info "~a" (alexandria:hash-table-keys user-tags))
+           (if (ppcre:scan "^\\s?ACTION " message-text)
+             (make-instance 'action
+                            :message message-text 
+                            :channel channel
+                            :user-info user-info
+                            :display-name (gethash "display-name" user-tags)
+                            :username user ;;(gethash "login" user-tags)
+                            :user-id (gethash "user-id" user-tags)
+                            :mod (gethash "mod" user-tags)
+                            :subscribed (gethash "subscriber" user-tags)
+                            :tags user-tags
+                            :raw raw-message)
+             (make-instance 'privmsg
+                            :message message-text
+                            :channel channel
+                            :user-info user-info
+                            :display-name (gethash "display-name" user-tags)
+                            :username user
+                            :user-id (gethash "user-id" user-tags)
+                            :mod (gethash "mod" user-tags)
+                            :subscribed (gethash "subscriber" user-tags)
+                            :tags user-tags
+                            :raw raw-message))))
         
         ("CLEARMSG"
          (let ((user-tags (parse-user-tags user-info)))
@@ -331,9 +362,8 @@
                 (cond
                   ((string= (nth 2 message) "NOTICE")
                    (progn
-                     (log:info "CAUGHT NOTICE: ~a" message)
                      (let ((message-text (drop-colon
-                                     (format nil "~{~A ~}" (subseq message 4)))))
+                                          (format nil "~{~A ~}" (subseq message 4)))))
                        (return-from parse-message
                          (make-instance 'notice :message message-text
                                                 :channel (drop-hash (nth 3 message)))))))
@@ -375,31 +405,34 @@
                     
                   ((= 1 (length message)) nil)
                     
-                  (t ;; (log:info "FELL THROUGH: ~a" message)
-                   nil))))
-             
+                  (t nil ;;(log:info "FELL THROUGH: ~a" message)
+                   ))))
+           
            (dolist (single-message (ppcre:split "" raw-message))
              (handle-multimessage
               (split-irc-message single-message)))))))))
 
-(defun make-connection (nick pass handler &key reconnect-handler
-                                            (verify t))
+(defun make-connection (nick pass handler &key (verify t))
   (let ((connection (wsd:make-client "wss://irc-ws.chat.twitch.tv:443/irc")))
+
     (wsd:on :error connection
             (lambda (error)
               (log:info error)))
+
     (wsd:on :close connection
-            (if reconnect-handler
-                (funcall reconnect-handler)
-                (lambda (&key code reason)
-                  (log:info "CLOSED ~a ~a" code reason))))
+            #'(lambda (&key code reason)
+                (declare (ignore code reason))
+                (apply handler (list (make-instance 'disconnected) connection))))
+
     (wsd:on :open connection
             (lambda ()
               (wsd:send
                connection
                "CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership")
               (wsd:send connection (format nil "PASS ~a" pass))
-              (wsd:send connection (format nil "NICK ~a" nick))))
+              (wsd:send connection (format nil "NICK ~a" nick))
+              (apply handler (list (make-instance 'connected) connection))))
+
     (wsd:on :message connection
             #'(lambda (message)
                 (when-let ((parsed-message (funcall 'parse-message
