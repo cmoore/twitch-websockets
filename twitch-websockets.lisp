@@ -6,11 +6,17 @@
                 #:when-let
                 #:switch
                 #:alist-hash-table)
-  
+
   (:export #:user
            #:reconnect
+
+           #:connection
+           #:nick #:auth #:websocket
+
+           #:send-message
+
            #:whisper
-           
+
            ;; events
            #:clearchat
            #:clearmsg
@@ -22,10 +28,10 @@
            #:unmod
            #:connected
            #:disconnected
-           
-           #:make-connection
+
+           #:start-connection
            #:close-connection
-           
+
            #:join
            #:part
            #:notice
@@ -38,14 +44,14 @@
            #:clearmsg-channel
            #:clearmsg-login
            #:clearmsg-message-id
-           
+
            #:privmsg-channel
            #:privmsg-message
            #:privmsg-tags
            #:privmsg-raw
            #:privmsg-subscribed
            #:privmsg-mod
-           
+
            #:resubscribe-twitch-id
            #:resubscribe-user
            #:resubscribe-plan
@@ -72,7 +78,7 @@
            #:roomstate-slow
            #:roomstate-subs-only
            #:whisper-message
-           
+
            #:user-info
            #:user-display-name
            #:user-username
@@ -85,23 +91,25 @@
 
 (defclass user ()
   ((username :initarg :username
-             :accessor user-username)
+             :accessor user-username
+             :initform "username")
    (display-name :initarg :display-name
-                 :accessor user-display-name)
-   (info :initarg :user-info
-         :accessor user-info)
+                 :accessor user-display-name
+                 :initform "display-name")
+   (user-info :initarg :user-info
+              :initform "user-info")
    (userid :initarg :user-id
-           :accessor user-id)))
+           :accessor user-id
+           :initform "userid")))
 
 (defmethod print-object ((user user) out)
-  (print-unreadable-object (user out :type t)
-    (format out "~a ~a ~a"
-            (user-info user)
-            (user-display-name user)
-            (user-username user))))
+  (with-slots (display-name username) user
+    (print-unreadable-object (user out :type t)
+      (format out "~a ~a" display-name username))))
 
 (defclass whisper (user)
   ((message :initarg :message
+            :initform "no message?"
             :accessor whisper-message)))
 
 (defclass clearchat ()
@@ -168,8 +176,7 @@
             :accessor addmod-channel)))
 
 (defclass part (user)
-  ((channel :initarg :channel
-            :accessor part-channel)))
+  ((channel :initarg :channel)))
 
 (defclass join (user)
   ((channel :initarg :channel
@@ -209,6 +216,11 @@
 (defclass connected ()
   nil)
 
+(defclass connection ()
+  ((nick :initarg :nick)
+   (auth :initarg :auth)
+   (websocket :initarg :websocket)))
+
 (defun parse-user-tags (info-line)
   (let ((entries (ppcre:split ";" info-line))
         (result (make-hash-table :test #'equalp)))
@@ -241,46 +253,48 @@
                        (car (ppcre:split "!" string))
                        ""))
 
-(defun parse-message (connection raw-message)
+(defun parse-message (websocket raw-message)
   (let* ((split-message (split-irc-message raw-message))
          ;; This is not the message type.  It's to tell things like
          ;; PINGs etc. from PRIVMSG and friends.
          (command (car split-message)))
-    
     (cond ((string= command "PONG") (return-from parse-message nil))
           ((string= command "PING")
            ;; Not sure why we're getting pings.  The twitch docs
            ;; say that we're supposed to SEND pings, not receive
            ;; them, but ok, we're flexible.
-           (wsd:send connection "PONG")
+           (log:info "WE WERE PINGED")
+           (wsd:send websocket "PONG")
            (return-from parse-message nil)))
 
     ;; Check for a reconnect message.
     (when (and (cadr split-message)
                (string= (cadr split-message) "RECONNECT"))
       (return-from parse-message (make-instance 'reconnect)))
-    
+
     (destructuring-bind (user-info user message-type &rest message)
         split-message
       (alexandria:switch (message-type :test #'equal)
 
         ;; Ignoring these for now.
-        ("USERSTATE" (log:info "USERSTATE: ~a" raw-message))
+        ("USERSTATE" nil ;;(log:info "USERSTATE: ~a" raw-message)
+                     )
 
         ("RECONNECT"
          (log:info "GOT RECONNECT EVENT!!!")
-         (websocket-driver.ws.base:close-connection connection)
+         (websocket-driver.ws.base:close-connection websocket)
          (make-instance 'disconnected))
 
         ("WHISPER"
          (make-instance 'whisper
-                        :display-name (gethash "display-name"
-                                               (parse-user-tags user-info))
+                        :display-name (or (gethash "display-name"
+                                                   (parse-user-tags user-info))
+                                          "Something's fucky.")
                         :username user
                         :user-info user-info
                         :message (drop-colon
                                   (format nil "~{~A ~}" (cdr message)))))
-        
+
         ("PRIVMSG"
          (let* ((user-tags (parse-user-tags user-info))
                 (message-text (scrub-message
@@ -290,7 +304,7 @@
            ;;(log:info "~a" (alexandria:hash-table-keys user-tags))
            (if (ppcre:scan "^\\s?ACTION " message-text)
              (make-instance 'action
-                            :message message-text 
+                            :message message-text
                             :channel channel
                             :user-info user-info
                             :display-name (gethash "display-name" user-tags)
@@ -311,14 +325,14 @@
                             :subscribed (gethash "subscriber" user-tags)
                             :tags user-tags
                             :raw raw-message))))
-        
+
         ("CLEARMSG"
          (let ((user-tags (parse-user-tags user-info)))
            (make-instance 'clearmsg
                           :message-id (gethash "target-msg-id" user-tags)
                           :login (gethash "@login" user-tags)
                           :channel (drop-colon (car message)))))
-        
+
         ("CLEARCHAT"
          (make-instance 'clearchat
                         :channel (drop-hash (car message))
@@ -383,70 +397,79 @@
                                       :r9k (gethash "r9k" tags)
                                       :followers-only (gethash "followers-only" tags)
                                       :emote-only (gethash "emote-only" tags)))))
-                    
+
                   ((string= (nth 1 message) "PART")
                    (return-from parse-message
                      (make-instance 'part
                                     :display-name (parse-irc-name (nth 0 message))
                                     :channel (drop-hash (nth 2 message)))))
-                    
+
                   ((string= (nth 1 message) "JOIN")
                    (return-from parse-message
                      (make-instance 'join
                                     :display-name (parse-irc-name (nth 0 message))
                                     :channel (drop-hash (nth 2 message)))))
-                    
+
                   ((string= (nth 1 message) "MODE")
                    (destructuring-bind (jtv mode channel action nick)
                        message
                      (declare (ignore mode jtv))
                      (return-from parse-message
                        (make-mode nick channel action))))
-                    
+
                   ((= 1 (length message)) nil)
-                    
+
                   (t nil ;;(log:info "FELL THROUGH: ~a" message)
                    ))))
-           
+
            (dolist (single-message (ppcre:split "" raw-message))
              (handle-multimessage
               (split-irc-message single-message)))))))))
 
-(defun make-connection (nick pass handler &key (verify t))
-  (let ((connection (wsd:make-client "wss://irc-ws.chat.twitch.tv:443/irc")))
+(defmethod start-connection ((connection connection) handler &key (verify t))
+  (with-slots (nick auth websocket)
+      connection
+    (setf websocket (wsd:make-client "wss://irc-ws.chat.twitch.tv:443/irc"))
 
-    (wsd:on :error connection
+    (wsd:on :error websocket
             (lambda (error)
               (log:info error)))
 
-    (wsd:on :close connection
+    (wsd:on :close websocket
             #'(lambda (&key code reason)
                 (declare (ignore code reason))
-                (apply handler (list (make-instance 'disconnected) connection))))
+                (apply handler (list connection (make-instance 'disconnected)))))
 
-    (wsd:on :open connection
+    (wsd:on :open websocket
             (lambda ()
-              (wsd:send
-               connection
-               "CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership")
-              (wsd:send connection (format nil "PASS ~a" pass))
-              (wsd:send connection (format nil "NICK ~a" nick))
-              (apply handler (list (make-instance 'connected) connection))))
+              (wsd:send websocket
+                        "CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership")
+              (wsd:send websocket (format nil "PASS ~a" auth))
+              (wsd:send websocket (format nil "NICK ~a" nick))))
 
-    (wsd:on :message connection
+    (wsd:on :message websocket
             #'(lambda (message)
-                (when-let ((parsed-message (funcall 'parse-message
-                                                    connection
+                (let ((parsed-message (funcall 'parse-message
+                                                    websocket
                                                     message)))
-                  (apply handler (list parsed-message connection)))))
-    (wsd:start-connection connection :verify verify)
-    connection))
+                  (if parsed-message
+                    (apply handler (list connection parsed-message))
+                    (apply handler (list connection message))))))
+    (wsd:start-connection websocket :verify verify)))
 
-(defun close-connection (connection)
-  (wsd:close-connection connection))
+(defmethod close-connection ((connection connection))
+  (with-slots (websocket) connection
+    (wsd:close-connection websocket)))
 
-(defun join (connection channel-name)
-  (wsd:send connection (format nil "JOIN #~a" channel-name)))
+(defmethod join ((connection connection) channel-name)
+  (with-slots (websocket) connection
+    (wsd:send websocket (format nil "JOIN #~a" channel-name))))
 
-(defun part (connection channel-name)
-  (wsd:send connection (format nil "PART #~a" channel-name)))
+(defmethod part ((connection connection) channel-name)
+  (with-slots (websocket) connection
+    (wsd:send websocket (format nil "PART #~a" channel-name))))
+
+(defmethod send-message ((connection connection) channel-name message)
+  (with-slots (websocket) connection
+    (wsd:send websocket (format nil "PRIVMSG #~a ~a"
+                                channel-name message))))
