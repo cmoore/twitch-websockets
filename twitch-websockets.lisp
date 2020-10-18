@@ -11,6 +11,7 @@
            #:reconnect
 
            #:connection
+           #:connection-websocket
            #:nick #:auth #:websocket
 
            #:send-message
@@ -31,6 +32,7 @@
 
            #:start-connection
            #:close-connection
+           #:ready-state
 
            #:join
            #:part
@@ -47,6 +49,8 @@
 
            #:privmsg-channel
            #:privmsg-message
+           #:message
+           #:display-name
            #:privmsg-tags
            #:privmsg-raw
            #:privmsg-subscribed
@@ -176,7 +180,8 @@
             :accessor addmod-channel)))
 
 (defclass part (user)
-  ((channel :initarg :channel)))
+  ((channel :initarg :channel
+            :accessor part-channel)))
 
 (defclass join (user)
   ((channel :initarg :channel
@@ -219,7 +224,8 @@
 (defclass connection ()
   ((nick :initarg :nick)
    (auth :initarg :auth)
-   (websocket :initarg :websocket)))
+   (websocket :initarg :websocket
+              :accessor connection-websocket)))
 
 (defun parse-user-tags (info-line)
   (let ((entries (ppcre:split ";" info-line))
@@ -258,15 +264,8 @@
          ;; This is not the message type.  It's to tell things like
          ;; PINGs etc. from PRIVMSG and friends.
          (command (car split-message)))
-    (cond ((string= command "PONG") (return-from parse-message nil))
-          ((string= command "PING")
-           ;; Not sure why we're getting pings.  The twitch docs
-           ;; say that we're supposed to SEND pings, not receive
-           ;; them, but ok, we're flexible.
-           (log:info "WE WERE PINGED")
-           (wsd:send websocket "PONG")
-           (return-from parse-message nil)))
-
+    (when (string= command "PING")
+      (return-from parse-message nil))
     ;; Check for a reconnect message.
     (when (and (cadr split-message)
                (string= (cadr split-message) "RECONNECT"))
@@ -277,7 +276,7 @@
       (alexandria:switch (message-type :test #'equal)
 
         ;; Ignoring these for now.
-        ("USERSTATE" nil ;;(log:info "USERSTATE: ~a" raw-message)
+        ("USERSTATE" nil (log:info "USERSTATE: ~a" raw-message)
                      )
 
         ("RECONNECT"
@@ -341,9 +340,9 @@
                                                (parse-user-tags user-info) "0")))
 
         ("USERNOTICE"
+         (log:info "tmi:NOTICE: ~a" message)
          (let* ((user-tags (parse-user-tags user-info))
                 (notice-type (gethash "msg-id" user-tags)))
-           ;;(log:info "~a" (alexandria:hash-table-keys user-tags))
            (cond ((or (string= notice-type "resub")
                       (string= notice-type "sub"))
                   (make-instance 'resubscribe
@@ -426,6 +425,12 @@
              (handle-multimessage
               (split-irc-message single-message)))))))))
 
+;; I promise I'm not duplicating the API from WSD. No, really.
+(defmethod ready-state ((connection connection))
+  (with-slots (websocket)
+      connection
+    (wsd:ready-state websocket)))
+
 (defmethod start-connection ((connection connection) handler &key (verify t))
   (with-slots (nick auth websocket)
       connection
@@ -449,12 +454,10 @@
 
     (wsd:on :message websocket
             #'(lambda (message)
-                (let ((parsed-message (funcall 'parse-message
+                (when-let ((parsed-message (funcall 'parse-message
                                                     websocket
                                                     message)))
-                  (if parsed-message
-                    (apply handler (list connection parsed-message))
-                    (apply handler (list connection message))))))
+                  (apply handler (list connection parsed-message)))))
     (wsd:start-connection websocket :verify verify)))
 
 (defmethod close-connection ((connection connection))
@@ -463,13 +466,13 @@
 
 (defmethod join ((connection connection) channel-name)
   (with-slots (websocket) connection
-    (wsd:send websocket (format nil "JOIN #~a" channel-name))))
+    (wsd:send websocket (format nil "JOIN ~a" channel-name))))
 
 (defmethod part ((connection connection) channel-name)
   (with-slots (websocket) connection
-    (wsd:send websocket (format nil "PART #~a" channel-name))))
+    (wsd:send websocket (format nil "PART ~a" channel-name))))
 
 (defmethod send-message ((connection connection) channel-name message)
   (with-slots (websocket) connection
-    (wsd:send websocket (format nil "PRIVMSG #~a ~a"
+    (wsd:send websocket (format nil "PRIVMSG ~a ~a"
                                 channel-name message))))
