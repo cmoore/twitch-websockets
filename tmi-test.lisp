@@ -1,5 +1,4 @@
 
-
 ;;
 ;; A note about twitch and websockets: If you open a single connection
 ;; and send a message to a channel, that message won't come back as a
@@ -10,6 +9,7 @@
 
 (ql:quickload '(:twitch-websockets
                 :alexandria
+                :log4cl
                 :yason))
 
 (defpackage :tmi-test
@@ -17,72 +17,70 @@
 
 (in-package :tmi-test)
 
-(defun message-handler (ws-connection message)
-  (declare (ignore ws-connection))
+(defun message-handler (connection message)
   (typecase message
+    (tmi:notice
+     (log:info "NOTICE: ~a: ~a"
+               (tmi:notice-channel message)
+               (tmi:notice-channel message)))
 
-    (tmi:notice (log:info "NOTICE: ~a" (tmi:notice-message message)))
-
-    (tmi:roomstate (log:info "ROOMSTATE: ~a ~a"
-                             (tmi:roomstate-room-id message)
-                             (tmi:roomstate-subs-only message)))
+    (tmi:roomstate
+     (log:info "ROOMSTATE: ~a" message))
 
     (tmi:part
-       (log:info "~a left ~a"
-                 (tmi:user-display-name message)
-                 (tmi:part-channel message)))
+     (log:info "~a left ~a"
+               (tmi:user-display-name message)
+               (tmi:part-channel message)))
 
     (tmi:join
-       (log:info "~a joined ~a"
-                 (tmi:user-display-name message)
-                 (tmi:join-channel message)))
+     (log:info "~a joined ~a"
+               (tmi:user-display-name message)
+               (tmi:join-channel message)))
 
     (tmi:addmod
-       (log:info "~a was modded in ~a"
-                 (tmi:user-display-name message)
-                 (tmi:addmod-channel message)))
+     (log:info "~a was modded in ~a"
+               (tmi:user-display-name message)
+               (tmi:addmod-channel message)))
 
     (tmi:unmod
-       (log:info "~a was un-modded in ~a"
-                 (tmi:user-display-name message)
-                 (tmi:unmod-channel message)))
+     (log:info "~a was un-modded in ~a"
+               (tmi:user-display-name message)
+               (tmi:unmod-channel message)))
 
     (tmi:clearchat
-       (log:info "~a was banned from ~a for ~a seconds."
-                 (tmi:clearchat-banned-user message)
-                 (tmi:clearchat-channel message)
-                 (tmi:clearchat-ban-duration message)))
+     (log:info "~a was banned from ~a for ~a seconds."
+               (tmi:clearchat-banned-user message)
+               (tmi:clearchat-channel message)
+               (tmi:clearchat-ban-duration)))
 
     (tmi:resubscribe
-       (log:info "~a resubscribed to ~a"
-                 (tmi:resubscribe-user message)
-                 (tmi:resubscribe-channel message)))
+     (log:info "~a resubscribed to ~a"
+               (tmi:user-display-name message)
+               (tmi:resubscribe-channel message)))
 
     (tmi:clearmsg
-       (log:info "~a clearmsg ~a messageid: ~a"
-                 (tmi:clearmsg-login message)
-                 (tmi:clearmsg-channel message)
-                 (tmi:clearmsg-message-id message)))
+     (log:info "~a clearmsg ~a messageid: ~a"
+               (tmi:clearmsg-login message)
+               (tmi:clearmsg-channel message)
+               (tmi:clearmsg-message-id message)))
 
     (tmi:privmsg
-     (log:info "~a on ~a said ~a"
-               (tmi:user-display-name message)
+     (log:info "~a ~a >>> ~a"
                (tmi:privmsg-channel message)
+               (tmi:user-display-name message)
                (tmi:privmsg-message message)))
 
-    (t (log:info "Unhandled: ~a ~a" ws-connection message))))
+    (t (log:info "Unhandled: ~a ~a" connection message))))
 
 (defvar *connection* nil)
 
 (defun setup ()
   (unless (and *connection*
-               (eq :open
-                   (wsd:ready-state
-                    (tmi:connection-websocket *connection*))))
+               (eq (tmi:ready-state *connection*) :open))
     (setf *connection*
           (make-instance 'tmi:connection
                          :nick "chatpollbot"
-                         ;;
+                         :handler 'message-handler
                          ;; Your twitch oauth password
                          ;; The easiest place to get this is
                          ;; https://twitchapps.com/tmi/
@@ -97,11 +95,7 @@
                                  (alexandria:read-file-into-string
                                   (asdf:system-relative-pathname
                                    :chatpoll
-                                   "config.json"))))))
-    (tmi:start-connection *connection* 'message-handler :verify nil))
-
-
-
+                                   "config.json")))))))
   ;;
   ;; At this point, to test things out it's probably best to join a
   ;; bunch of channels.  for experimentation, what I do is go to
@@ -110,8 +104,5 @@
   ;; spam.
   ;;
 
-
-
-  ;; Don't forget the # when joining channels.
   ;; (tmi:join *connection* "#channel-name")
   )

@@ -7,55 +7,40 @@
                 #:switch
                 #:alist-hash-table)
 
-  (:export #:user
-           #:reconnect
-
-           #:connection
+  (:export #:connection
+           #:connection-nick
+           #:connection-auth
            #:connection-websocket
-           #:nick #:auth #:websocket
+           #:connection-handler
 
-           #:send-message
+           #:user
+           #:user-username
+           #:user-display-name
+           #:user-user-info
+           #:user-userid
 
            #:whisper
+           #:whisper-message
 
-           ;; events
            #:clearchat
-           #:clearmsg
-           #:whisper
-           #:privmsg
-           #:action
-           #:resubscribe
-           #:addmod
-           #:unmod
-           #:connected
-           #:disconnected
-
-           #:start-connection
-           #:close-connection
-           #:ready-state
-
-           #:join
-           #:part
-           #:notice
-           #:hosting
-           #:roomstate
-
            #:clearchat-channel
            #:clearchat-banned-user
            #:clearchat-ban-duration
+
+           #:clearmsg
            #:clearmsg-channel
            #:clearmsg-login
            #:clearmsg-message-id
 
+           #:privmsg
            #:privmsg-channel
            #:privmsg-message
-           #:message
-           #:display-name
            #:privmsg-tags
            #:privmsg-raw
            #:privmsg-subscribed
            #:privmsg-mod
 
+           #:resubscribe
            #:resubscribe-twitch-id
            #:resubscribe-user
            #:resubscribe-plan
@@ -66,14 +51,28 @@
            #:resubscribe-channel
            #:resubscribe-message
            #:resubscribe-tags
+
+           #:unmod
            #:unmod-channel
+
+           #:addmod
            #:addmod-channel
+
+           #:part
            #:part-channel
+
+           #:join
            #:join-channel
+
+           #:notice
            #:notice-message
            #:notice-channel
+
+           #:hosting
            #:hosting-who
-           #:hosting-target
+           #:hostring-target
+
+           #:roomstate
            #:roomstate-emote-only
            #:roomstate-followers-only
            #:roomstate-r9k
@@ -81,139 +80,171 @@
            #:roomstate-room-id
            #:roomstate-slow
            #:roomstate-subs-only
-           #:whisper-message
 
-           #:user-info
-           #:user-display-name
-           #:user-username
-           #:user-mod))
+           #:disconnected
+           #:connected
+
+           #:ws-error
+           #:ws-error-message
+
+           #:ws-close
+           #:ws-close-code
+           #:ws-close-reason
+
+           #:ws-open
+
+           #:reconnect
+           #:action
+
+           #:with-wsd
+           #:ready-state
+           #:close-connection
+           #:join
+           #:part
+           #:send-message
+           #:connect))
 
 (in-package #:twitch-websockets)
 
 
-(defclass reconnect () ())
+(defclass connection ()
+  ((nick :initarg :nick
+         :accessor connection-nick)
+   (auth :initarg :auth
+         :accessor connection-auth)
+   (websocket :initarg :websocket
+              :reader connection-websocket)
+   (handler :initarg :handler
+            :initform (error "You must supply a handler")
+            :accessor connection-handler)))
 
 (defclass user ()
   ((username :initarg :username
-             :accessor user-username
-             :initform "username")
+             :initform "username"
+             :reader user-username)
    (display-name :initarg :display-name
-                 :accessor user-display-name
-                 :initform "display-name")
+                 :initform "display-name"
+                 :reader user-display-name)
    (user-info :initarg :user-info
-              :initform "user-info")
+              :initform "user-info"
+              :reader user-user-info)
    (userid :initarg :user-id
-           :accessor user-id
-           :initform "userid")))
+           :initform "userid"
+           :reader user-userid)))
 
 (defmethod print-object ((user user) out)
   (with-slots (display-name username) user
     (print-unreadable-object (user out :type t)
       (format out "~a ~a" display-name username))))
 
+
 (defclass whisper (user)
   ((message :initarg :message
             :initform "no message?"
-            :accessor whisper-message)))
+            :reader whisper-message)))
 
 (defclass clearchat ()
   ((channel :initarg :channel
-            :accessor clearchat-channel)
+            :reader clearchat-channel)
    (banned-user :initarg :banned-user
-                :accessor clearchat-banned-user)
+                :reader clearchat-banned-user)
    (ban-duration :initarg :ban-duration
-                 :accessor clearchat-ban-duration)))
+                 :reader clearchat-ban-duration)))
 
 (defclass clearmsg ()
   ((channel :initarg :channel
-            :accessor clearmsg-channel)
+            :reader clearmsg-channel)
    (login :initarg :login
-          :accessor clearmsg-login)
+          :reader clearmsg-login)
    (message-id :initarg :message-id
-               :accessor clearmsg-message-id)))
+               :reader clearmsg-message-id)))
 
 (defclass privmsg (user)
   ((channel :initarg :channel
-            :accessor privmsg-channel)
+            :reader privmsg-channel)
    (message :initarg :message
-            :accessor privmsg-message)
+            :reader privmsg-message)
    (tags :initarg :tags
-         :accessor privmsg-tags)
+         :reader privmsg-tags)
    (raw :initarg :raw
-        :accessor privmsg-raw)
+        :reader privmsg-raw)
    (subscribed :initarg :subscribed
-               :accessor privmsg-subscribed)
+               :reader privmsg-subscribed)
    (mod :initarg :mod
-        :accessor privmsg-mod)))
-
-(defclass action (privmsg)
-  ())
+        :reader privmsg-mod)))
 
 (defclass resubscribe (user)
   ((twitch-id :initarg :twitch-id
-              :accessor resubscribe-twitch-id)
+              :reader resubscribe-twitch-id)
    (user :initarg :user
-         :accessor resubscribe-user)
+         :reader resubscribe-user)
    (plan :initarg :plan
-         :accessor resubscribe-plan)
+         :reader resubscribe-plan)
    (turbo :initarg :turbo
-          :accessor resubscribe-turbo)
+          :reader resubscribe-turbo)
    (months :initarg :months
-           :accessor resubscribe-months)
+           :reader resubscribe-months)
    (premium :initarg :premium
-            :accessor resubscribe-premium)
+            :reader resubscribe-premium)
    (color :initarg :color
-          :accessor resubscribe-color)
+          :reader resubscribe-color)
    (channel :initarg :channel
-            :accessor resubscribe-channel)
+            :reader resubscribe-channel)
    (message :initarg :message
-            :accessor resubscribe-message)
+            :reader resubscribe-message)
    (tags :initarg :tags
-         :accessor resubscribe-tags)))
+         :reader resubscribe-tags)))
 
 (defclass unmod (user)
   ((channel :initarg :channel
-            :accessor unmod-channel)))
+            :reader unmod-channel)))
 
 (defclass addmod (user)
   ((channel :initarg :channel
-            :accessor addmod-channel)))
+            :reader addmod-channel)))
 
 (defclass part (user)
   ((channel :initarg :channel
-            :accessor part-channel)))
+            :reader part-channel)))
 
 (defclass join (user)
   ((channel :initarg :channel
-            :accessor join-channel)))
+            :reader join-channel)))
 
 (defclass notice ()
   ((message :initarg :message
-            :accessor notice-message)
+            :reader notice-message)
    (channel :initarg :channel
-            :accessor notice-channel)))
+            :reader notice-channel)))
 
 (defclass hosting ()
   ((who :initarg :who
-        :accessor hosting-who)
+        :reader hosting-who)
    (target :initarg :target
-           :accessor hosting-target)))
+           :reader hosting-target)))
 
 (defclass roomstate ()
   ((emote-only :initarg :emote-only
-               :accessor roomstate-emote-only)
+               :reader roomstate-emote-only)
    (followers-only :initarg :followers-only
-                   :accessor roomstate-followers-only)
+                   :reader roomstate-followers-only)
    (r9k :initarg :r9k
-        :accessor roomstate-r9k)
+        :reader roomstate-r9k)
    (rituals :initarg :rituals
-            :accessor roomstate-rituals)
+            :reader roomstate-rituals)
    (room-id :initarg :room-id
-            :accessor roomstate-room-id)
+            :reader roomstate-room-id)
    (slow :initarg :slow
-         :accessor roomstate-slow)
+         :reader roomstate-slow)
    (subs-only :initarg :subs-only
-              :accessor roomstate-subs-only)))
+              :reader roomstate-subs-only)))
+
+(defmethod print-object ((roomstate roomstate) out)
+  (with-slots (emote-only followers-only r9k rituals
+               room-id slow subs-only) roomstate
+    (print-unreadable-object (user out :type t)
+      (format out "emote: ~a followers: ~a r9k: ~a rituals: ~a room-id ~a slow: ~a subs-only: ~a"
+              emote-only followers-only r9k rituals room-id slow subs-only))))
 
 (defclass disconnected ()
   nil)
@@ -221,11 +252,25 @@
 (defclass connected ()
   nil)
 
-(defclass connection ()
-  ((nick :initarg :nick)
-   (auth :initarg :auth)
-   (websocket :initarg :websocket
-              :accessor connection-websocket)))
+(defclass ws-error ()
+  ((message :initarg :message
+            :reader ws-error-message)))
+
+(defclass ws-close ()
+  ((code :initarg :code
+         :reader ws-close-code)
+   (reason :initarg :reason
+           :reader ws-close-reason)))
+
+(defclass ws-open () ())
+
+(defclass reconnect () ())
+
+(defclass action (privmsg) ())
+
+
+
+;; Parser... it's ugly, just warning you...
 
 (defun parse-user-tags (info-line)
   (let ((entries (ppcre:split ";" info-line))
@@ -276,11 +321,9 @@
       (alexandria:switch (message-type :test #'equal)
 
         ;; Ignoring these for now.
-        ("USERSTATE" nil (log:info "USERSTATE: ~a" raw-message)
-                     )
+        ("USERSTATE" nil)
 
         ("RECONNECT"
-         (log:info "GOT RECONNECT EVENT!!!")
          (websocket-driver.ws.base:close-connection websocket)
          (make-instance 'disconnected))
 
@@ -300,7 +343,6 @@
                                (drop-colon
                                 (format nil "~{~A ~}" (cdr message)))))
                 (channel (car message)))
-           ;;(log:info "~a" (alexandria:hash-table-keys user-tags))
            (if (ppcre:scan "^\\s?ACTION " message-text)
              (make-instance 'action
                             :message message-text
@@ -340,7 +382,6 @@
                                                (parse-user-tags user-info) "0")))
 
         ("USERNOTICE"
-         (log:info "tmi:NOTICE: ~a" message)
          (let* ((user-tags (parse-user-tags user-info))
                 (notice-type (gethash "msg-id" user-tags)))
            (cond ((or (string= notice-type "resub")
@@ -361,7 +402,6 @@
         ;; The MODE events (ie. opping/modding a person) are in a
         ;; different format.
         (t
-         ;;(log:info "Message type: ~a" message-type)
          (labels
              ((make-mode (name channel mode)
                 (switch (mode :test #'string=)
@@ -418,61 +458,71 @@
 
                   ((= 1 (length message)) nil)
 
-                  (t nil ;;(log:info "FELL THROUGH: ~a" message)
-                   ))))
+                  (t nil))))
 
            (dolist (single-message (ppcre:split "" raw-message))
              (handle-multimessage
               (split-irc-message single-message)))))))))
 
-;; I promise I'm not duplicating the API from WSD. No, really.
+
+;;; Utilities
+
+(defmacro with-wsd (connection &rest body)
+  `(with-slots (websocket)
+       ,connection
+     ,@body))
+
 (defmethod ready-state ((connection connection))
-  (with-slots (websocket)
-      connection
+  (with-wsd connection (wsd:ready-state websocket)))
+
+(defmethod close-connection ((connection connection))
+  (with-wsd connection (wsd:close-connection websocket)))
+
+(defmethod join ((connection connection) (channel-name string))
+  (with-wsd connection
+    (wsd:send websocket (format nil "JOIN ~a" channel-name))))
+
+(defmethod part ((connection connection) channel-name)
+  (with-wsd connection
+    (wsd:send websocket (format nil "PART ~a" channel-name))))
+
+(defmethod send-message ((connection connection) channel-name message)
+  (with-wsd connection
+    (wsd:send websocket (format nil "PRIVMSG ~a ~a"
+                                channel-name message))))
+
+(defmethod connected? ((connection connection))
+  (with-wsd connection
     (wsd:ready-state websocket)))
 
-(defmethod start-connection ((connection connection) handler &key (verify t))
-  (with-slots (nick auth websocket)
+(defmethod connect ((connection connection))
+  (with-wsd connection
+    (wsd:start-connection websocket))
+  connection)
+
+(defmethod initialize-instance :after ((connection connection) &key)
+  (with-slots (nick auth websocket handler)
       connection
     (setf websocket (wsd:make-client "wss://irc-ws.chat.twitch.tv:443/irc"))
 
     (wsd:on :error websocket
             (lambda (error)
-              (log:info error)))
-
+              (apply handler  (list connection (make-instance 'ws-error
+                                                              :error error)))))
     (wsd:on :close websocket
-            #'(lambda (&key code reason)
-                (declare (ignore code reason))
-                (apply handler (list connection (make-instance 'disconnected)))))
-
+            (lambda (&key code reason)
+              (apply handler
+                     (list connection
+                           (make-instance 'ws-close :code code :reason reason)))))
     (wsd:on :open websocket
             (lambda ()
-              (wsd:send websocket
-                        "CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership")
+              (wsd:send websocket "CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership")
               (wsd:send websocket (format nil "PASS ~a" auth))
-              (wsd:send websocket (format nil "NICK ~a" nick))))
+              (wsd:send websocket (format nil "NICK ~a" nick))
+              (apply handler (list connection (make-instance 'ws-open)))))
 
     (wsd:on :message websocket
-            #'(lambda (message)
-                (when-let ((parsed-message (funcall 'parse-message
-                                                    websocket
-                                                    message)))
-                  (apply handler (list connection parsed-message)))))
-    (wsd:start-connection websocket :verify verify)))
-
-(defmethod close-connection ((connection connection))
-  (with-slots (websocket) connection
-    (wsd:close-connection websocket)))
-
-(defmethod join ((connection connection) channel-name)
-  (with-slots (websocket) connection
-    (wsd:send websocket (format nil "JOIN ~a" channel-name))))
-
-(defmethod part ((connection connection) channel-name)
-  (with-slots (websocket) connection
-    (wsd:send websocket (format nil "PART ~a" channel-name))))
-
-(defmethod send-message ((connection connection) channel-name message)
-  (with-slots (websocket) connection
-    (wsd:send websocket (format nil "PRIVMSG ~a ~a"
-                                channel-name message))))
+            (lambda (message)
+              (when-let ((parsed-message (funcall 'parse-message
+                                                  websocket message)))
+                (apply handler (list connection parsed-message)))))))
