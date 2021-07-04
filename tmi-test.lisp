@@ -96,14 +96,11 @@
                          ;; Your twitch oauth password
                          ;; The easiest place to get this is
                          ;; https://twitchapps.com/tmi/
-                         ;; In this case, I'm just pulling it
-                         ;; from the config of another project.
                          ;; It'll look something like
                          ;; "oauth:102930129310asdklwakd"
                          ;;
                          :auth "your oauth string")))
 
-  ;; You need to explicitly connect now.
   (tmi:connect *connection*)
 
   ;;
