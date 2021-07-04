@@ -3,43 +3,4 @@ twitch-websockets
 
 A websockets event interface for Twitch.tv channels.
 
-* Update (Jan 21 2021)
-
-  I'm going to update and rewrite large parts of this library.  I've decided
-  that 1) this is pretty useful and I've decided to write a twitch bot
-  for... well, for fun, and 2) that this library is pretty crappy as it is which
-  is a bit embarrassing.
-
-  So, essentially, I'm going to break it.  I'm pretty confident that no one
-  really uses this, but I figured a quick note was a good idea regardless.
-
-
-* Usage
-
-  It's important to note that this package only provides a thin layer on top of
-  websocket-driver, and you'll need to use it for things like joining and
-  leaving a channel, sending messages, and the like.  This library just provides
-  an evented interface to the events happening on different channels at the same
-  time and was written to be used by a bot that joined ~50 or so channels a
-  thread.
-
-  The nicknames ~wsd~ (websocket-driver) and ~tmi~ (this library) make this a
-  little easier.
-
-  Take a look at ~tmi-test.lisp~ for an example session.
-
-* Handled events
-
-  I've been adding events as I find them.  One thing that *isn't* in is getting
-  the list of mods when you first join a channel.  Twitch sends this info just
-  fine, I just haven't taken the time to figure out how I want to handle such a
-  potentially large amount of events (addmod) at one time.
-
-- privmsg
-- whisper
-- clearchat
-- clearmsg - This is brittle to the point of being practically broken.  It's
-  first on the list to fix.
-- resubscribe
-- addmod
-- unmod
+Take a look at tmi-test.lisp for example usage.

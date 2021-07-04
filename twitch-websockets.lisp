@@ -59,10 +59,10 @@
            #:addmod-channel
 
            #:part
-           #:part-channel
+           #:part-channel-name
 
            #:join
-           #:join-channel
+           #:join-channel-name
 
            #:notice
            #:notice-message
@@ -99,8 +99,8 @@
            #:with-wsd
            #:ready-state
            #:close-connection
-           #:join
-           #:part
+           #:join-channel
+           #:part-channel
            #:send-message
            #:connect))
 
@@ -205,11 +205,11 @@
 
 (defclass part (user)
   ((channel :initarg :channel
-            :reader part-channel)))
+            :reader part-channel-name)))
 
 (defclass join (user)
   ((channel :initarg :channel
-            :reader join-channel)))
+            :reader join-channel-name)))
 
 (defclass notice ()
   ((message :initarg :message
@@ -478,11 +478,11 @@
 (defmethod close-connection ((connection connection))
   (with-wsd connection (wsd:close-connection websocket)))
 
-(defmethod join ((connection connection) (channel-name string))
+(defmethod join-channel ((connection connection) (channel-name string))
   (with-wsd connection
     (wsd:send websocket (format nil "JOIN ~a" channel-name))))
 
-(defmethod part ((connection connection) channel-name)
+(defmethod part-channel ((connection connection) channel-name)
   (with-wsd connection
     (wsd:send websocket (format nil "PART ~a" channel-name))))
 
@@ -507,8 +507,7 @@
 
     (wsd:on :error websocket
             (lambda (error)
-              (apply handler  (list connection (make-instance 'ws-error
-                                                              :error error)))))
+              (apply handler  (list connection (make-instance 'ws-error :error error)))))
     (wsd:on :close websocket
             (lambda (&key code reason)
               (apply handler
