@@ -7,4 +7,4 @@
 
 *** Status
 
-    What's here, works and the API won't change.  I'll almost certainly add things, but I won't break the existing library.  An example for each event is in tmi-test.lisp.
+    I don't know of anything here that doesn't work but if you find something I'd love it if you'd open an issue.  I'll almost certainly add things, but I won't break the existing library.  An example for each event will be in tmi-test.lisp.
