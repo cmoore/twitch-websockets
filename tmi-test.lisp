@@ -1,3 +1,16 @@
+;;
+;; sbcl --load "tmi-test.lisp"
+;;
+;; Broken stuff
+;;
+;; - subscribe and resubscribe events come back with "display-name" as the username of the person who resubscribed.
+;;
+;; - USERNOTICE message that *aren't* sub or resub events aren't parsed correctly.
+;;
+;; - wsd doesn't start pinging and I haven't looked into it yet.
+;;   You'll notice this as you'll get disconnected after about 10
+;;   minutes or so.
+;;
 
 ;;
 ;; A note about twitch and websockets: If you open a single connection
@@ -8,9 +21,7 @@
 ;;
 
 (ql:quickload '(:twitch-websockets
-                :alexandria
-                :log4cl
-                :yason))
+                :log4cl))
 
 
 (defpackage :tmi-test
@@ -18,6 +29,7 @@
 
 (in-package :tmi-test)
 
+(setf tmi::*debug* t)
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:notice))
   (log:info "NOTICE: ~a: ~a"
@@ -39,30 +51,36 @@
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:addmod))
   (log:info "~a was modded in ~a"
-                   (tmi:user-display-name message)
-                   (tmi:addmod-channel message)))
+            (tmi:user-display-name message)
+            (tmi:addmod-channel message)))
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:unmod))
   (log:info "~a was un-modded in ~a"
-                   (tmi:user-display-name message)
-                   (tmi:unmod-channel message)))
+            (tmi:user-display-name message)
+            (tmi:unmod-channel message)))
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:clearchat))
   (log:info "~a was banned from ~a for ~a seconds."
-                   (tmi:clearchat-banned-user message)
-                   (tmi:clearchat-channel message)
-                   (tmi:clearchat-ban-duration message)))
+            (tmi:clearchat-banned-user message)
+            (tmi:clearchat-channel message)
+            (tmi:clearchat-ban-duration message)))
+
+(defmethod handle-message ((connection tmi:connection) (message tmi:subscribe))
+  (log:info "~a resubscribed to ~a"
+            (tmi:user-display-name message)
+            (tmi:subscribe-channel message)))
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:resubscribe))
   (log:info "~a resubscribed to ~a"
-                   (tmi:user-display-name message)
-                   (tmi:resubscribe-channel message)))
+            (tmi:user-display-name message)
+            (tmi:resubscribe-channel message))
+  )
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:clearmsg))
   (log:info "~a clearmsg ~a messageid: ~a"
-                   (tmi:clearmsg-login message)
-                   (tmi:clearmsg-channel message)
-                   (tmi:clearmsg-message-id message)))
+            (tmi:clearmsg-login message)
+            (tmi:clearmsg-channel message)
+            (tmi:clearmsg-message-id message)))
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:ws-close))
   (log:info "Connection closed: ~a ~a"
@@ -73,10 +91,11 @@
   (log:info "WS Connection opened."))
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:privmsg))
-  (log:info "~a ~a >>> ~a"
-            (tmi:privmsg-channel message)
-            (tmi:user-display-name message)
-            (tmi:privmsg-message message)))
+  ;; (log:info "~a ~a >>> ~a"
+  ;;           (tmi:privmsg-channel message)
+  ;;           (tmi:user-display-name message)
+  ;;           (tmi:privmsg-message message))
+  )
 
 (defmethod handle-message ((connection tmi:connection) message)
   (log:info "Unhandled message: ~a" message))
@@ -85,6 +104,14 @@
 
 (defvar *connection* nil)
 
+;; TMI hands your function straight to websockets-client, so if you
+;; want to handle any errors, you'll want to wrap it in something.
+(defun handle-message-wrapper (connection message)
+  (handler-case
+      (handle-message connection message)
+    (error (condition)
+      (log:info "Error in one of our handlers: ~a" condition))))
+
 
 (defun setup ()
   (unless (and *connection*
@@ -92,7 +119,8 @@
     (setf *connection*
           (make-instance 'tmi:connection
                          :nick "chatpollbot"
-                         :handler 'handle-message
+                         :handler 'handle-message-wrapper
+
                          ;; Your twitch oauth password
                          ;; The easiest place to get this is
                          ;; https://twitchapps.com/tmi/
@@ -112,3 +140,12 @@
   ;;
   ;; (tmi:join-channel *connection* "#channel-name")
   )
+
+
+(log:config :sane :this-console :pretty)
+(setup)
+(tmi:join-channel *connection* "#quin69")
+(tmi:join-channel *connection* "#asmongold")
+(tmi:join-channel *connection* "#starladder5")
+(tmi:join-channel *connection* "#ranboolive")
+(tmi:join-channel *connection* "#gamesdonequick")

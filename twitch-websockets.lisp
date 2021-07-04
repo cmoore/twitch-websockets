@@ -40,6 +40,18 @@
            #:privmsg-subscribed
            #:privmsg-mod
 
+           #:subscribe
+           #:subscribe-twitch-id
+           #:subscribe-user
+           #:subscribe-plan
+           #:subscribe-turbo
+           #:subscribe-months
+           #:subscribe-premium
+           #:subscribe-color
+           #:subscribe-channel
+           #:subscribe-message
+           #:subscribe-tags
+
            #:resubscribe
            #:resubscribe-twitch-id
            #:resubscribe-user
@@ -106,6 +118,12 @@
 
 (in-package #:twitch-websockets)
 
+(defvar *debug* nil)
+
+(defmacro mdebug (&rest message)
+  `(when *debug*
+     (funcall #'(lambda ()
+                  (log:info ,@message)))))
 
 (defclass connection ()
   ((nick :initarg :nick
@@ -172,6 +190,28 @@
                :reader privmsg-subscribed)
    (mod :initarg :mod
         :reader privmsg-mod)))
+
+(defclass subscribe (user)
+  ((twitch-id :initarg :twitch-id
+              :reader subscribe-twitch-id)
+   (user :initarg :user
+         :reader subscribe-user)
+   (plan :initarg :plan
+         :reader subscribe-plan)
+   (turbo :initarg :turbo
+          :reader subscribe-turbo)
+   (months :initarg :months
+           :reader subscribe-months)
+   (premium :initarg :premium
+            :reader subscribe-premium)
+   (color :initarg :color
+          :reader subscribe-color)
+   (channel :initarg :channel
+            :reader subscribe-channel)
+   (message :initarg :message
+            :reader subscribe-message)
+   (tags :initarg :tags
+         :reader subscribe-tags)))
 
 (defclass resubscribe (user)
   ((twitch-id :initarg :twitch-id
@@ -318,6 +358,8 @@
 
     (destructuring-bind (user-info user message-type &rest message)
         split-message
+      (unless (every #'upper-case-p message-type)
+        (mdebug "TMI: message-type: ~a: ~a" message-type raw-message))
       (alexandria:switch (message-type :test #'equal)
 
         ;; Ignoring these for now.
@@ -344,28 +386,28 @@
                                 (format nil "~{~A ~}" (cdr message)))))
                 (channel (car message)))
            (if (ppcre:scan "^\\s?ACTION " message-text)
-             (make-instance 'action
-                            :message message-text
-                            :channel channel
-                            :user-info user-info
-                            :display-name (gethash "display-name" user-tags)
-                            :username user ;;(gethash "login" user-tags)
-                            :user-id (gethash "user-id" user-tags)
-                            :mod (gethash "mod" user-tags)
-                            :subscribed (gethash "subscriber" user-tags)
-                            :tags user-tags
-                            :raw raw-message)
-             (make-instance 'privmsg
-                            :message message-text
-                            :channel channel
-                            :user-info user-info
-                            :display-name (gethash "display-name" user-tags)
-                            :username user
-                            :user-id (gethash "user-id" user-tags)
-                            :mod (gethash "mod" user-tags)
-                            :subscribed (gethash "subscriber" user-tags)
-                            :tags user-tags
-                            :raw raw-message))))
+               (make-instance 'action
+                              :message message-text
+                              :channel channel
+                              :user-info user-info
+                              :display-name (gethash "display-name" user-tags)
+                              :username user ;;(gethash "login" user-tags)
+                              :user-id (gethash "user-id" user-tags)
+                              :mod (gethash "mod" user-tags)
+                              :subscribed (gethash "subscriber" user-tags)
+                              :tags user-tags
+                              :raw raw-message)
+               (make-instance 'privmsg
+                              :message message-text
+                              :channel channel
+                              :user-info user-info
+                              :display-name (gethash "display-name" user-tags)
+                              :username user
+                              :user-id (gethash "user-id" user-tags)
+                              :mod (gethash "mod" user-tags)
+                              :subscribed (gethash "subscriber" user-tags)
+                              :tags user-tags
+                              :raw raw-message))))
 
         ("CLEARMSG"
          (let ((user-tags (parse-user-tags user-info)))
@@ -384,20 +426,34 @@
         ("USERNOTICE"
          (let* ((user-tags (parse-user-tags user-info))
                 (notice-type (gethash "msg-id" user-tags)))
-           (cond ((or (string= notice-type "resub")
-                      (string= notice-type "sub"))
-                  (make-instance 'resubscribe
-                                 :twitch-id (gethash "user-id" user-tags)
-                                 :user (gethash "display-name" user-tags)
-                                 :color (gethash "color" user-tags)
-                                 :premium nil
-                                 :plan (gethash "msg-param-sub-plan-name" user-tags)
-                                 :channel (car message)
-                                 :tags user-tags
-                                 :message (ppcre:regex-replace-all
-                                           "\\\\s"
-                                           (gethash "system-msg" user-tags)
-                                           " "))))))
+           (alexandria:switch (notice-type :test #'string=)
+             ("resub" (mdebug "TMI: RESUB USER TAGS: ~a /////////// ~a" user-tags raw-message)
+                      (make-instance 'resubscribe
+                                     :twitch-id (gethash "user-id" user-tags)
+                                     :user (gethash "display-name" user-tags)
+                                     :color (gethash "color" user-tags)
+                                     :premium nil
+                                     :plan (gethash "msg-param-sub-plan-name" user-tags)
+                                     :channel (car message)
+                                     :tags user-tags
+                                     :message (ppcre:regex-replace-all
+                                               "\\\\s"
+                                               (gethash "system-msg" user-tags)
+                                               " ")))
+             ("sub" (mdebug "TMI: SUB USER TAGS: ~a /////////// ~a" user-tags raw-message)
+                    (make-instance 'subscribe
+                                   :twitch-id (gethash "user-id" user-tags)
+                                   :user (gethash "display-name" user-tags)
+                                   :color (gethash "color" user-tags)
+                                   :premium nil
+                                   :plan (gethash "msg-param-sub-plan-name" user-tags)
+                                   :channel (car message)
+                                   :tags user-tags
+                                   :message (ppcre:regex-replace-all
+                                             "\\\\s"
+                                             (gethash "system-msg" user-tags)
+                                             " ")))
+             (t (mdebug "TMI: UNKNOWN USERNOTICE TYPE: ~a" raw-message)))))
 
         ;; The MODE events (ie. opping/modding a person) are in a
         ;; different format.
