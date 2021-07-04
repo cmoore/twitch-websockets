@@ -1,6 +1,10 @@
 
-twitch-websockets
+*** twitch-websockets
 
-A websockets event interface for Twitch.tv channels.
+    A websockets event interface for Twitch.tv channels.
 
-Take a look at tmi-test.lisp for example usage.
+    Take a look at tmi-test.lisp for example usage.
+
+*** Status
+
+    What's here, works and the API won't change.  I'll almost certainly add things, but I won't break the existing library.  An example for each event is in tmi-test.lisp.
