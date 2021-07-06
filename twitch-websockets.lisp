@@ -349,7 +349,8 @@
          ;; This is not the message type.  It's to tell things like
          ;; PINGs etc. from PRIVMSG and friends.
          (command (car split-message)))
-    (when (string= command "PING")
+    (when (ppcre:scan "^PING" command)
+      (wsd:send websocket (format nil "PONG ~a" (cadr split-message)))
       (return-from parse-message nil))
     ;; Check for a reconnect message.
     (when (and (cadr split-message)
