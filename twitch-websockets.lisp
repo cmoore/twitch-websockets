@@ -82,7 +82,7 @@
 
            #:hosting
            #:hosting-who
-           #:hostring-target
+           #:hosting-target
 
            #:roomstate
            #:roomstate-emote-only
@@ -108,7 +108,6 @@
            #:reconnect
            #:action
 
-           #:with-wsd
            #:ready-state
            #:close-connection
            #:join-channel
@@ -127,16 +126,27 @@
 
 (defclass connection ()
   ((nick :initarg :nick
-         :accessor connection-nick)
+         :accessor connection-nick
+         :initform "chattymcchat")
    (auth :initarg :auth
-         :accessor connection-auth)
+         :accessor connection-auth
+         :initform (error "You must supply an oauth string"))
    (websocket :initarg :websocket
               :reader connection-websocket)
    (handler :initarg :handler
             :initform (error "You must supply a handler")
             :accessor connection-handler)))
 
-(defclass user ()
+(defclass tmi ()
+  ((tags :initarg :tags
+         :reader tmi-tags)))
+
+(defmethod print-object ((tmi tmi) out)
+  (with-slots (tags) tmi
+    (print-unreadable-object (tmi out :type t)
+      (format out "~{~a~^,~}" (alexandria:hash-table-keys tags)))))
+
+(defclass user (tmi)
   ((username :initarg :username
              :initform "username"
              :reader user-username)
@@ -161,7 +171,7 @@
             :initform "no message?"
             :reader whisper-message)))
 
-(defclass clearchat ()
+(defclass clearchat (tmi)
   ((channel :initarg :channel
             :reader clearchat-channel)
    (banned-user :initarg :banned-user
@@ -169,7 +179,7 @@
    (ban-duration :initarg :ban-duration
                  :reader clearchat-ban-duration)))
 
-(defclass clearmsg ()
+(defclass clearmsg (tmi)
   ((channel :initarg :channel
             :reader clearmsg-channel)
    (login :initarg :login
@@ -251,19 +261,19 @@
   ((channel :initarg :channel
             :reader join-channel-name)))
 
-(defclass notice ()
+(defclass notice (tmi)
   ((message :initarg :message
             :reader notice-message)
    (channel :initarg :channel
             :reader notice-channel)))
 
-(defclass hosting ()
+(defclass hosting (tmi)
   ((who :initarg :who
         :reader hosting-who)
    (target :initarg :target
            :reader hosting-target)))
 
-(defclass roomstate ()
+(defclass roomstate (tmi)
   ((emote-only :initarg :emote-only
                :reader roomstate-emote-only)
    (followers-only :initarg :followers-only
@@ -355,6 +365,8 @@
     ;; Check for a reconnect message.
     (when (and (cadr split-message)
                (string= (cadr split-message) "RECONNECT"))
+      (log:info "TMI: FIRST RECONNECT HANDLER: ~a ///// ~a"
+                raw-message split-message)
       (return-from parse-message (make-instance 'reconnect)))
 
     (destructuring-bind (user-info user message-type &rest message)
@@ -364,12 +376,15 @@
       (alexandria:switch (message-type :test #'equal)
 
         ;; Ignoring these for now.
-        ("USERSTATE" nil)
+        ("USERSTATE"
+         (log:info "TMI: USERSTATE: ~a" raw-message)
+         (return-from parse-message nil))
 
         ("RECONNECT"
-         (websocket-driver.ws.base:close-connection websocket)
-         (make-instance 'disconnected))
+         (log:info "TMI: SECOND RECONNECT HANDLER: ~a ///// ~a"
+                   split-message raw-message)
 
+         (return-from parse-message (make-instance 'reconnect)))
         ("WHISPER"
          (make-instance 'whisper
                         :display-name (or (gethash "display-name"
@@ -377,6 +392,7 @@
                                           "Something's fucky.")
                         :username user
                         :user-info user-info
+                        :tags (parse-user-tags user-info)
                         :message (drop-colon
                                   (format nil "~{~A ~}" (cdr message)))))
 
@@ -415,20 +431,23 @@
            (make-instance 'clearmsg
                           :message-id (gethash "target-msg-id" user-tags)
                           :login (gethash "@login" user-tags)
-                          :channel (drop-colon (car message)))))
+                          :channel (drop-colon (car message))
+                          :tags user-tags)))
 
         ("CLEARCHAT"
          (make-instance 'clearchat
                         :channel (drop-hash (car message))
                         :banned-user (scrub-message (drop-colon (cadr message)))
                         :ban-duration (gethash "@ban-duration"
-                                               (parse-user-tags user-info) "0")))
+                                               (parse-user-tags user-info)
+                                               "0")
+                        :tags (parse-user-tags user-info)))
 
         ("USERNOTICE"
          (let* ((user-tags (parse-user-tags user-info))
                 (notice-type (gethash "msg-id" user-tags)))
            (alexandria:switch (notice-type :test #'string=)
-             ("resub" (mdebug "TMI: RESUB USER TAGS: ~a /////////// ~a" user-tags raw-message)
+             ("resub" (mdebug "TMI: RESUB USER TAGS: ~a /////////// ~a" (alexandria:hash-table-keys user-tags) raw-message)
                       (make-instance 'resubscribe
                                      :twitch-id (gethash "user-id" user-tags)
                                      :user (gethash "display-name" user-tags)
@@ -543,9 +562,9 @@
   (with-wsd connection
     (wsd:send websocket (format nil "PART ~a" channel-name))))
 
-(defmethod send-message ((connection connection) channel-name message)
+(defmethod send-message ((connection connection) (channel-name string) (message string))
   (with-wsd connection
-    (wsd:send websocket (format nil "PRIVMSG ~a ~a"
+    (wsd:send websocket (format nil "PRIVMSG ~a ~a"
                                 channel-name message))))
 
 (defmethod connected? ((connection connection))
@@ -557,19 +576,33 @@
     (wsd:start-connection websocket))
   connection)
 
+(defvar *message-log* nil)
+
 (defmethod initialize-instance :after ((connection connection) &key)
   (with-slots (nick auth websocket handler)
       connection
     (setf websocket (wsd:make-client "wss://irc-ws.chat.twitch.tv:443/irc"))
 
+    (wsd:on :pong websocket
+            (lambda (payload)
+              (wsd:send websocket payload :type :ping)))
+
+    (wsd:on :ping websocket
+            (lambda (payload)
+              (wsd:send websocket payload :type :pong)))
+
     (wsd:on :error websocket
             (lambda (error)
-              (apply handler  (list connection (make-instance 'ws-error :error error)))))
+              (log:info "ERROR: ~a" error)
+              (apply handler (list connection
+                                   (make-instance 'ws-error
+                                                  :message error)))))
     (wsd:on :close websocket
             (lambda (&key code reason)
               (apply handler
                      (list connection
                            (make-instance 'ws-close :code code :reason reason)))))
+
     (wsd:on :open websocket
             (lambda ()
               (wsd:send websocket "CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership")
@@ -579,6 +612,7 @@
 
     (wsd:on :message websocket
             (lambda (message)
+              (push message *message-log*)
               (when-let ((parsed-message (funcall 'parse-message
                                                   websocket message)))
                 (apply handler (list connection parsed-message)))))))

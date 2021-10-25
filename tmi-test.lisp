@@ -1,16 +1,16 @@
 ;;
-;; sbcl --load "tmi-test.lisp"
+;; sbcl --load tmi-test.lisp
+;;
+;; Beware, if you don't edit the channel list at the bottom of this
+;; file, your repl might well start filling up with obscenities or
+;; worse, when you run the script as above.
+;;
 ;;
 ;; Broken stuff
 ;;
 ;; - subscribe and resubscribe events come back with "display-name" as the username of the person who resubscribed.
 ;;
 ;; - USERNOTICE message that *aren't* sub or resub events aren't parsed correctly.
-;;
-;; - wsd doesn't start pinging and I haven't looked into it yet.
-;;   You'll notice this as you'll get disconnected after about 10
-;;   minutes or so.
-;;
 
 ;;
 ;; A note about twitch and websockets: If you open a single connection
@@ -20,8 +20,8 @@
 ;; and the other for receiving them.
 ;;
 
-(ql:quickload '(:twitch-websockets
-                :log4cl))
+;; (ql:quickload '(:twitch-websockets
+;;                 :log4cl))
 
 
 (defpackage :tmi-test
@@ -31,13 +31,35 @@
 
 (setf tmi::*debug* t)
 
+
+(defmethod handle-message ((connection tmi:connection) (message tmi:hosting))
+  (log:info "~a is now hosting ~a"
+            (tmi:hosting-who message)
+            (tmi:hosting-target message)))
+
+(defmethod handle-message ((connection tmi:connection) (message tmi:addmod))
+  (log:info "~a was modded on ~a"
+            (tmi:user-display-name message)
+            (tmi:addmod-channel message)))
+
+(defmethod handle-message ((connection tmi:connection) (message tmi:addmod))
+  (log:info "~a was UN-modded on ~a"
+            (tmi:user-display-name message)
+            (tmi:unmod-channel message)))
+
+(defmethod handle-message ((connection tmi:connection) (message tmi:whisper))
+  (log:info "~a whispered: ~a"
+            (tmi:user-display-name message)
+            (tmi:whisper-message message)))
+
 (defmethod handle-message ((connection tmi:connection) (message tmi:notice))
   (log:info "NOTICE: ~a: ~a"
                    (tmi:notice-channel message)
                    (tmi:notice-channel message)))
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:roomstate))
-  (log:info "ROOMSTATE: ~a" message))
+  ;;(log:info "ROOMSTATE: ~a" message)
+  )
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:part))
   (log:info "~a left ~a"
@@ -49,16 +71,6 @@
                    (tmi:user-display-name message)
                    (tmi:join-channel-name message)))
 
-(defmethod handle-message ((connection tmi:connection) (message tmi:addmod))
-  (log:info "~a was modded in ~a"
-            (tmi:user-display-name message)
-            (tmi:addmod-channel message)))
-
-(defmethod handle-message ((connection tmi:connection) (message tmi:unmod))
-  (log:info "~a was un-modded in ~a"
-            (tmi:user-display-name message)
-            (tmi:unmod-channel message)))
-
 (defmethod handle-message ((connection tmi:connection) (message tmi:clearchat))
   (log:info "~a was banned from ~a for ~a seconds."
             (tmi:clearchat-banned-user message)
@@ -66,15 +78,10 @@
             (tmi:clearchat-ban-duration message)))
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:subscribe))
-  (log:info "~a resubscribed to ~a"
-            (tmi:user-display-name message)
-            (tmi:subscribe-channel message)))
+  (log:info (tmi:subscribe-message message)))
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:resubscribe))
-  (log:info "~a resubscribed to ~a"
-            (tmi:user-display-name message)
-            (tmi:resubscribe-channel message))
-  )
+  (log:info (tmi:resubscribe-message message)))
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:clearmsg))
   (log:info "~a clearmsg ~a messageid: ~a"
@@ -87,14 +94,17 @@
             (tmi:ws-close-code message)
             (tmi:ws-close-reason message)))
 
+(defmethod handle-message ((connection tmi:connection) (message tmi:reconnect))
+  (log:info "***************** RECEIEVED RECONNECT *****************************"))
+
 (defmethod handle-message ((connection tmi:connection) (message tmi:ws-open))
   (log:info "WS Connection opened."))
 
 (defmethod handle-message ((connection tmi:connection) (message tmi:privmsg))
-  ;; (log:info "~a ~a >>> ~a"
-  ;;           (tmi:privmsg-channel message)
-  ;;           (tmi:user-display-name message)
-  ;;           (tmi:privmsg-message message))
+  (log:info "~a ~a >>> ~a"
+            (tmi:privmsg-channel message)
+            (tmi:user-display-name message)
+            (tmi:privmsg-message message))
   )
 
 (defmethod handle-message ((connection tmi:connection) message)
@@ -104,22 +114,20 @@
 
 (defvar *connection* nil)
 
-;; TMI hands your function straight to websockets-client, so if you
-;; want to handle any errors, you'll want to wrap it in something.
-(defun handle-message-wrapper (connection message)
-  (handler-case
-      (handle-message connection message)
-    (error (condition)
-      (log:info "Error in one of our handlers: ~a" condition))))
 
-
+(defvar *message-log* nil)
 (defun setup ()
   (unless (and *connection*
                (eq (tmi:ready-state *connection*) :open))
     (setf *connection*
           (make-instance 'tmi:connection
                          :nick "chatpollbot"
-                         :handler 'handle-message-wrapper
+                         :handler #'(lambda (connection message)
+                                      ;;(push message *message-log*)
+                                      (handler-case
+                                          (handle-message connection message)
+                                        (error (condition)
+                                          (log:info "Error in our handlers: ~a" condition))))
 
                          ;; Your twitch oauth password
                          ;; The easiest place to get this is
@@ -127,10 +135,19 @@
                          ;; It'll look something like
                          ;; "oauth:102930129310asdklwakd"
                          ;;
-                         :auth "your oauth string")))
+                         :auth "oauth:klzf0khuss0mgkrx9qclkqoqmbq6hf")))
 
   (tmi:connect *connection*)
-
+  (bt:make-thread (lambda ()
+                    (block oof
+                      (loop
+                        (unless (eq :open (tmi:ready-state *connection*))
+                          (log:info "Not ponging a closed connection")
+                          (return-from oof))
+                        (wsd:send (tmi:connection-websocket *connection*)
+                                  #.(make-array 0 :element-type '(unsigned-byte 8))
+                                  :type :pong)
+                        (sleep 10)))))
   ;;
   ;; At this point, to test things out it's probably best to join a
   ;; bunch of channels.  for experimentation, what I do is go to
@@ -141,11 +158,29 @@
   ;; (tmi:join-channel *connection* "#channel-name")
   )
 
+(defun start ()
+  (setup)
 
-(log:config :sane :this-console :pretty)
-(setup)
-(tmi:join-channel *connection* "#quin69")
-(tmi:join-channel *connection* "#asmongold")
-(tmi:join-channel *connection* "#starladder5")
-(tmi:join-channel *connection* "#ranboolive")
-(tmi:join-channel *connection* "#gamesdonequick")
+  ;; (tmi:join-channel *connection* "#moonmoon")
+  ;; (tmi:join-channel *connection* "#faker")
+  ;; (tmi:join-channel *connection* "#trainwreckstv")
+  ;; (tmi:join-channel *connection* "#timthetatman")
+  ;; (tmi:join-channel *connection* "#iiTzTimmy")
+  ;; (tmi:join-channel *connection* "#ThisIsNotGeorgeNotFound")
+  ;; (tmi:join-channel *connection* "#gamesdonequick")
+  ;; (tmi:join-channel *connection* "#sodapoppin")
+  ;; (tmi:join-channel *connection* "#quin69")
+
+  ;; (tmi:join-channel *connection* "#ppy")
+  (tmi:join-channel *connection* "#fart_simulator")
+  )
+
+
+
+(defun fart-omg ()
+  (dotimes (x 10)
+    (tmi:send-message *connection* "#fart_simulator" "! fart a")
+    (sleep 1)
+    (tmi:send-message *connection* "#fart_simulator" "!fart b")
+    (sleep 1))
+  (tmi:send-message *connection* "#fart_simulator" "!match"))
